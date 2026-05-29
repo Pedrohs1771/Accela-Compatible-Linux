@@ -1,6 +1,8 @@
 # ACCELA Compatible Linux
 
-Build do ACCELA preparada para Arch Linux com:
+Versão modificada em pt-BR do projeto original `ACCELA / enter-the-wired`, adaptada para Linux e mantida neste repositório.
+
+Build do ACCELA preparada para Linux com:
 
 - interface em pt-BR
 - modo stealth com bandeja do sistema e autostart
@@ -9,6 +11,19 @@ Build do ACCELA preparada para Arch Linux com:
 - Rich Presence opcional do ACCELA
 - instalador automático de dependências e do `SLSsteam`
 - atualizações pelo GitHub dentro do próprio app
+
+## Créditos e atribuição
+
+- Projeto original: `ACCELA / enter-the-wired`
+- Repositório upstream: `https://github.com/ciscosweater/enter-the-wired`
+- Autor upstream: `ciscosweater`
+- Esta build é uma versão modificada com foco em pt-BR, integração Linux e empacotamento próprio
+- Obrigado ao projeto original por disponibilizar o código em open source
+
+## Licença
+
+Este repositório preserva a base open source do projeto original sob licença `MIT`.
+O aviso de licença e copyright do upstream foi mantido no arquivo `LICENSE`.
 
 ## Instalação
 
@@ -80,4 +95,3 @@ As chaves não vão no repositório nem no pacote. Cada pessoa precisa adicionar
 Demonstration: 
 
 <video src="https://github.com/user-attachments/assets/67e7de40-be6f-4258-b9f4-ba48ab4f09b1" width="100%" controls></video>
-
