@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import shutil
@@ -230,10 +231,15 @@ class SettingsDialog(QDialog):
         self.discord_small_image_input = None
         self.github_updates_checkbox = None
         self.github_auto_update_checkbox = None
+        self.github_signed_updates_checkbox = None
         self.github_repo_input = None
         self.update_status_label = None
+        self.update_security_label = None
+        self.update_backup_label = None
+        self.update_environment_label = None
         self.update_current_version_label = None
         self.update_now_button = None
+        self.update_rollback_button = None
         self.block_steam_updates_checkbox = None
         self.download_slssteam_button = None
         self.slssteam_status_label = None
@@ -954,6 +960,11 @@ class SettingsDialog(QDialog):
         self.update_current_version_label = QLabel("Versão atual: --")
         updates_layout.addWidget(self.update_current_version_label)
 
+        self.update_environment_label = QLabel("Sistema: analisando ambiente local...")
+        self.update_environment_label.setWordWrap(True)
+        self.update_environment_label.setStyleSheet("color: #888888; font-size: 11px;")
+        updates_layout.addWidget(self.update_environment_label)
+
         updates_layout.addWidget(QLabel("Repositório"))
         self.github_repo_input = QLineEdit()
         self.github_repo_input.setText(
@@ -984,10 +995,29 @@ class SettingsDialog(QDialog):
         )
         updates_layout.addWidget(self.github_auto_update_checkbox)
 
+        self.github_signed_updates_checkbox = create_checkbox_setting(
+            "Exigir assinatura válida no update",
+            "github_signed_updates_only",
+            True,
+            self,
+            "Bloqueia updates sem manifesto assinado e verificação de integridade.",
+        )
+        updates_layout.addWidget(self.github_signed_updates_checkbox)
+
         self.update_status_label = QLabel("Aguardando verificação.")
         self.update_status_label.setWordWrap(True)
         self.update_status_label.setStyleSheet("color: #888888; font-size: 11px;")
         updates_layout.addWidget(self.update_status_label)
+
+        self.update_security_label = QLabel("Assinatura: aguardando verificação.")
+        self.update_security_label.setWordWrap(True)
+        self.update_security_label.setStyleSheet("color: #888888; font-size: 11px;")
+        updates_layout.addWidget(self.update_security_label)
+
+        self.update_backup_label = QLabel("Rollback: analisando backups locais...")
+        self.update_backup_label.setWordWrap(True)
+        self.update_backup_label.setStyleSheet("color: #888888; font-size: 11px;")
+        updates_layout.addWidget(self.update_backup_label)
 
         buttons_layout = QHBoxLayout()
 
@@ -999,6 +1029,11 @@ class SettingsDialog(QDialog):
         self.update_now_button.clicked.connect(self._install_update_now)
         self.update_now_button.setEnabled(False)
         buttons_layout.addWidget(self.update_now_button)
+
+        self.update_rollback_button = QPushButton("Voltar backup")
+        self.update_rollback_button.clicked.connect(self._rollback_latest_backup)
+        self.update_rollback_button.setEnabled(False)
+        buttons_layout.addWidget(self.update_rollback_button)
 
         updates_layout.addLayout(buttons_layout)
         updates_group.setLayout(updates_layout)
@@ -1015,6 +1050,7 @@ class SettingsDialog(QDialog):
 
         manager.status_changed.connect(self._refresh_update_section)
         self._refresh_update_section(manager.status_message)
+        self._refresh_local_environment()
 
     def _refresh_update_section(self, message: Optional[str]) -> None:
         manager = getattr(self.main_window, "update_manager", None)
@@ -1025,9 +1061,76 @@ class SettingsDialog(QDialog):
         if self.update_status_label is not None and message:
             self.update_status_label.setText(message)
 
+        if self.update_security_label is not None:
+            security = (
+                manager.get_security_summary()
+                if manager is not None
+                else "Assinatura: indisponível."
+            )
+            self.update_security_label.setText(security)
+
+        if self.update_backup_label is not None:
+            summary = (
+                manager.get_backup_summary()
+                if manager is not None
+                else "Rollback: indisponível."
+            )
+            self.update_backup_label.setText(summary)
+
         if self.update_now_button is not None:
+            update_available = False
+            if manager is not None and manager.latest_release is not None:
+                latest_revision = str(
+                    manager.latest_release.get("commit_sha", "")
+                ).strip()
+                update_available = (
+                    bool(latest_revision)
+                    and latest_revision != manager.get_installed_revision()
+                )
             self.update_now_button.setEnabled(
-                manager is not None and manager.latest_release is not None
+                manager is not None and update_available
+            )
+
+        if self.update_rollback_button is not None:
+            self.update_rollback_button.setEnabled(
+                manager is not None and bool(manager.available_backups())
+            )
+
+    def _refresh_local_environment(self) -> None:
+        if self.update_environment_label is None:
+            return
+
+        install_script = get_base_path() / "install.sh"
+        if not install_script.exists():
+            self.update_environment_label.setText(
+                "Sistema: diagnóstico local indisponível até a próxima reinstalação."
+            )
+            return
+
+        try:
+            result = subprocess.run(
+                ["bash", str(install_script), "--diagnose", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if result.returncode != 0:
+                raise RuntimeError((result.stderr or result.stdout).strip() or "falhou")
+
+            data = json.loads(result.stdout)
+            deps = data.get("missing_dependencies") or []
+            deps_text = ", ".join(deps) if deps else "nenhuma"
+            self.update_environment_label.setText(
+                "Sistema detectado: "
+                f"{data.get('system', '--')} | "
+                f"Steam: {data.get('steam_mode', '--')} | "
+                f"GPU: {data.get('gpu', '--')} | "
+                f"Pendências: {deps_text} | "
+                f"Modo recomendado: {data.get('recommended_mode', '--')}"
+            )
+        except Exception as exc:
+            self.update_environment_label.setText(
+                f"Sistema: não foi possível gerar o diagnóstico local ({exc})."
             )
 
     @staticmethod
@@ -1394,6 +1497,10 @@ class SettingsDialog(QDialog):
             "github_updates_repo",
             self.github_repo_input.text().strip() or "Pedrohs1771/Accela-Compatible-Linux",
         )
+        self.settings.setValue(
+            "github_signed_updates_only",
+            self.github_signed_updates_checkbox.isChecked(),
+        )
 
     def _save_audio_settings(self) -> None:
         self.settings.setValue("play_etw", self.play_etw_checkbox.isChecked())
@@ -1680,6 +1787,32 @@ class SettingsDialog(QDialog):
             )
             return
         manager.install_update()
+
+    def _rollback_latest_backup(self) -> None:
+        manager = getattr(self.main_window, "update_manager", None)
+        if manager is None:
+            QMessageBox.warning(self, "Updates", "Gerenciador de updates indisponível.")
+            return
+
+        if not manager.available_backups():
+            QMessageBox.information(
+                self,
+                "Updates",
+                "Nenhum backup disponível para rollback.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Rollback",
+            "O ACCELA será fechado para restaurar o backup mais recente. Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        manager.rollback_to_latest_backup()
 
     def run_slscheevo(self) -> None:
         """Launch SLScheevo."""
