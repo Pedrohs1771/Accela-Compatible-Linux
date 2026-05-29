@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ACCELA
+Comment=ＧｏＤ_Ｉｓ_ｉＮ_ｔＨｅ_ＷｉＲｅＤ
+Exec=run.sh
+Icon=accela
+Terminal=false
+Type=Application
+Categories=Utility;Game;
+MimeType=x-scheme-handler/accela;
