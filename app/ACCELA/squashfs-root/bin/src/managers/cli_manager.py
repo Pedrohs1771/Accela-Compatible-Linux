@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QApplication
 from core.steam_helpers import (
     fix_greenluma_offline_mode,
     get_steam_libraries,
+    get_preferred_steam_library,
     find_next_applist_number,
     app_id_exists_in_applist,
 )
@@ -28,6 +29,11 @@ from core.morrenus_api import download_manifest as download_morrenus_manifest
 from utils.settings import get_settings
 from utils.task_runner import TaskRunner
 from utils.paths import Paths
+from utils.proton_tools import (
+    apply_steam_compat_tool,
+    build_default_proton_selection,
+    clear_steam_compat_tool,
+)
 from utils.steam_manifest import get_game_directory, write_acf_file
 from utils.helpers import create_font_from_settings
 from utils.wrapper_metadata import persist_selected_dlcs
@@ -179,10 +185,20 @@ def run_cli_mode(
         if slssteam_mode_local or library_mode:
             libraries = get_steam_libraries()
             if libraries:
+                if len(libraries) == 1:
+                    return libraries[0]
                 path = select_steam_library(libraries)
                 if path:
                     return path
                 return None
+
+            preferred_library = get_preferred_steam_library()
+            if preferred_library:
+                logger.info(
+                    "Steam library list was empty; falling back to main Steam path: %s",
+                    preferred_library,
+                )
+                return preferred_library
 
         # Use text-based destination path selection
         default_path = os.path.expanduser("~")
@@ -273,6 +289,16 @@ def run_cli_mode(
         logger.info("=" * 40)
 
         game_data["selected_depots_list"] = selected_depots
+        if sys.platform == "linux":
+            proton_defaults = build_default_proton_selection(
+                selected_depots, game_data.get("depots") or {}
+            )
+            game_data.update(proton_defaults)
+            if proton_defaults.get("force_proton"):
+                logger.info(
+                    "Steam compatibility will be forced to %s for this install",
+                    proton_defaults.get("proton_tool_display_name", "Proton"),
+                )
 
         download_task = DownloadDepotsTask()
         download_task.progress.connect(logger.info)
@@ -382,6 +408,7 @@ class CLITaskManager:
         # Set Linux binary permissions
         if sys.platform == "linux":
             self._set_linux_binary_permissions()
+            self._apply_linux_steam_compatibility()
 
         # Add AppIDs to SLSsteam config on Linux
         if sys.platform == "linux" and self.slssteam_mode_was_active:
@@ -581,6 +608,31 @@ class CLITaskManager:
 
         if not os.path.exists(game_directory):
             return
+
+    def _apply_linux_steam_compatibility(self):
+        if not self.game_data:
+            return
+
+        appid = self.game_data.get("appid")
+        if not appid:
+            return
+
+        if not self.game_data.get("force_proton"):
+            clear_steam_compat_tool(appid)
+            return
+
+        tool_name = self.game_data.get("proton_tool_name", "")
+        tool_display = self.game_data.get("proton_tool_display_name", tool_name)
+        if not tool_name:
+            self.logger.warning(
+                "Windows depots detected, but no Proton compatibility tool was available"
+            )
+            return
+
+        if apply_steam_compat_tool(appid, tool_name):
+            self.logger.info(
+                f"Steam compatibility forced to '{tool_display}' for AppID {appid}"
+            )
 
     def _apply_goldberg(self, game_directory: str, appid: str, game_name: str) -> bool:
         """Apply Goldberg files to a game directory (CLI mode)."""

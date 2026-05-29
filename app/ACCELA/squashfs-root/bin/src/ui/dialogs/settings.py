@@ -468,7 +468,7 @@ class SettingsDialog(QDialog):
         self.library_mode_checkbox = create_checkbox_setting(
             "Limitar downloads às bibliotecas da Steam",
             "library_mode",
-            False,
+            sys.platform == "linux",
             self,
             library_tooltip,
         )

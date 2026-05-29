@@ -40,13 +40,15 @@ def _find_steam_windows():
 def _find_steam_linux():
     home_dir = os.path.expanduser("~")
     potential_paths = [
+        os.path.join(home_dir, ".steam", "root"),
         os.path.join(home_dir, ".steam", "steam"),
+        os.path.join(home_dir, ".steam", "debian-installation"),
         os.path.join(home_dir, ".local", "share", "Steam"),
         os.path.join(
             home_dir, ".var", "app", "com.valvesoftware.Steam", "data", "Steam"
         ),
+        os.path.join(home_dir, "snap", "steam", "common", ".steam", "steam"),
     ]
-    # os.path.join(home_dir, "snap", "steam", "common", ".steam", "steam"),
 
     for path in potential_paths:
         if os.path.isdir(os.path.join(path, "steamapps")):
@@ -87,6 +89,28 @@ def get_steam_libraries():
             all_libraries.add(os.path.realpath(lib_path))
 
     return list(all_libraries)
+
+
+def get_preferred_steam_library():
+    """Return the most sensible default Steam library for installations.
+
+    Preference order:
+    1. If exactly one library is detected, use it directly.
+    2. Otherwise use the main Steam install path when valid.
+    3. Fall back to the first detected library if any exist.
+    """
+    libraries = get_steam_libraries()
+    if len(libraries) == 1:
+        return libraries[0]
+
+    steam_path = find_steam_install()
+    if steam_path and os.path.isdir(os.path.join(steam_path, "steamapps")):
+        return os.path.realpath(steam_path)
+
+    if libraries:
+        return libraries[0]
+
+    return None
 
 
 def kill_steam_process():

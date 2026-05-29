@@ -68,11 +68,14 @@ class CreditsDialog(QDialog):
         credits_info_layout.addWidget(address_label)
 
         # Project information
-        phone_label = QLabel("Build personalizada do ACCELA para Linux")
+        phone_label = QLabel("Versão modificada em pt-BR do ACCELA para Linux")
         phone_label.setStyleSheet("font-size: 12px; margin-top: 5px;")
         credits_info_layout.addWidget(phone_label)
 
-        upstream_label = QLabel("Baseado no ACCELA original. Obrigado por disponibilizar o projeto em open source.")
+        upstream_label = QLabel(
+            "Projeto original: ACCELA / enter-the-wired\n"
+            "Crédito ao projeto original e ao trabalho open source disponibilizado por ciscosweater."
+        )
         upstream_label.setWordWrap(True)
         upstream_label.setStyleSheet("font-size: 12px; margin-top: 5px;")
         credits_info_layout.addWidget(upstream_label)

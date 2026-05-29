@@ -28,6 +28,11 @@ from core.tasks.process_zip_task import ProcessZipTask
 from core.tasks.steamless_task import SteamlessTask
 
 from utils.helpers import get_base_path
+from utils.proton_tools import (
+    apply_steam_compat_tool,
+    build_default_proton_selection,
+    clear_steam_compat_tool,
+)
 from utils.steam_manifest import get_game_directory, write_acf_file
 from utils.wrapper_metadata import persist_selected_dlcs
 from utils.yaml_config_manager import (
@@ -173,6 +178,7 @@ class TaskManager(QObject):
             selected_depots = list(depots.keys())
             if self.game_data:
                 self.game_data["selected_depots_list"] = selected_depots
+                self._apply_default_linux_proton_selection(selected_depots)
             self._start_download_with_destination(selected_depots)
             return
 
@@ -190,6 +196,9 @@ class TaskManager(QObject):
             )
             if self.game_data:
                 self.game_data["selected_depots_list"] = selected_depots
+                self.game_data.update(
+                    self.main_window.ui_state.depot_dialog.get_proton_preferences()
+                )
 
             if not selected_depots:
                 self.job_finished()
@@ -198,6 +207,15 @@ class TaskManager(QObject):
             self._start_download_with_destination(selected_depots)
         else:
             self.job_finished()
+
+    def _apply_default_linux_proton_selection(self, selected_depots):
+        if sys.platform != "linux" or not self.game_data:
+            return
+
+        proton_defaults = build_default_proton_selection(
+            selected_depots, self.game_data.get("depots") or {}
+        )
+        self.game_data.update(proton_defaults)
 
     def _start_download_with_destination(self, selected_depots):
         dest_path = self._get_destination_path()
@@ -232,10 +250,7 @@ class TaskManager(QObject):
 
         libraries = steam_helpers.get_steam_libraries()
         if libraries:
-            auto_skip_single_choice = self.settings.value(
-                "auto_skip_single_choice", False, type=bool
-            )
-            if auto_skip_single_choice and len(libraries) == 1:
+            if len(libraries) == 1:
                 return libraries[0]
             dialog = SteamLibraryDialog(libraries, self.main_window)
             if dialog.exec():
@@ -243,6 +258,14 @@ class TaskManager(QObject):
             else:
                 return None
         else:
+            preferred_library = steam_helpers.get_preferred_steam_library()
+            if preferred_library:
+                logger.info(
+                    "Steam library list was empty; falling back to main Steam path: %s",
+                    preferred_library,
+                )
+                return preferred_library
+
             return QFileDialog.getExistingDirectory(
                 self.main_window, "Select Destination Folder"
             )
@@ -468,8 +491,34 @@ class TaskManager(QObject):
             return
 
         self._set_linux_binary_permissions()
+        self._apply_linux_steam_compatibility()
         if self.slssteam_mode_was_active and config_enabled:
             self._add_appids_to_slssteam_config()
+
+    def _apply_linux_steam_compatibility(self):
+        if not self.game_data:
+            return
+
+        appid = self.game_data.get("appid")
+        if not appid:
+            return
+
+        if not self.game_data.get("force_proton"):
+            clear_steam_compat_tool(appid)
+            return
+
+        tool_name = self.game_data.get("proton_tool_name", "")
+        tool_display = self.game_data.get("proton_tool_display_name", tool_name)
+        if not tool_name:
+            logger.warning(
+                "Windows depots detected, but no Proton compatibility tool was available"
+            )
+            return
+
+        if apply_steam_compat_tool(appid, tool_name):
+            logger.info(
+                f"Steam compatibility forced to '{tool_display}' for AppID {appid}"
+            )
 
     def _finalize_goldberg(self, auto_apply: bool):
         # 5. Goldberg

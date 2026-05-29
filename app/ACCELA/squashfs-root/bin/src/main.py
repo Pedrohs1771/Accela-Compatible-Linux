@@ -1,12 +1,13 @@
+import json
 import multiprocessing
 import os
 import sys
-import threading
 from urllib.parse import unquote
 import ctypes
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QTimer, QMetaObject, Qt, Q_ARG
+from PyQt6.QtCore import QTimer
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from ui.main_window import MainWindow
 from ui.theme import update_appearance
 from managers.cli_manager import run_cli_mode, open_cli_terminal
@@ -19,7 +20,6 @@ from utils.yaml_config_manager import (
 )
 from utils.version import app_version
 from core.steam_helpers import fix_greenluma_offline_mode
-from core.morrenus_api import download_manifest
 from utils.helpers import create_font_from_settings
 
 
@@ -43,6 +43,135 @@ set_app_user_model_id()
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+
+def _instance_server_name() -> str:
+    if os.name == "posix":
+        return f"accela.instance.{os.getuid()}"
+    return "accela.instance"
+
+
+def _cleanup_duplicate_gui_instances(logger) -> None:
+    try:
+        import psutil
+    except ImportError:
+        return
+
+    current_pid = os.getpid()
+    current_cwd = os.path.realpath(os.getcwd())
+    duplicate_processes = []
+
+    for process in psutil.process_iter(["pid", "cwd", "cmdline"]):
+        try:
+            pid = process.info.get("pid")
+            if pid == current_pid:
+                continue
+
+            cwd = process.info.get("cwd") or ""
+            if os.path.realpath(cwd) != current_cwd:
+                continue
+
+            cmdline = process.info.get("cmdline") or []
+            if "src/main.py" not in " ".join(cmdline):
+                continue
+            if "-cli" in cmdline or "--cli" in cmdline:
+                continue
+
+            duplicate_processes.append(process)
+        except (psutil.Error, OSError):
+            continue
+
+    for process in duplicate_processes:
+        try:
+            logger.warning(
+                f"Terminating duplicate ACCELA instance PID {process.pid}"
+            )
+            process.terminate()
+            process.wait(timeout=2)
+        except psutil.TimeoutExpired:
+            try:
+                process.kill()
+            except psutil.Error:
+                pass
+        except psutil.Error:
+            continue
+
+
+class SingleInstanceCoordinator:
+    def __init__(self, logger):
+        self.logger = logger
+        self.server_name = _instance_server_name()
+        self.server = None
+        self.main_window = None
+
+    def forward_to_primary(self, payload: dict) -> bool:
+        socket = QLocalSocket()
+        socket.connectToServer(self.server_name)
+        if not socket.waitForConnected(500):
+            return False
+
+        try:
+            message = json.dumps(payload).encode("utf-8") + b"\n"
+            socket.write(message)
+            socket.flush()
+            socket.waitForBytesWritten(500)
+        finally:
+            socket.disconnectFromServer()
+        return True
+
+    def start_listening(self, main_window: MainWindow) -> None:
+        self.main_window = main_window
+        self.server = QLocalServer()
+
+        if not self.server.listen(self.server_name):
+            QLocalServer.removeServer(self.server_name)
+            if not self.server.listen(self.server_name):
+                error_text = self.server.errorString()
+                self.logger.warning(
+                    f"Failed to start single-instance server: {error_text}"
+                )
+                self.server = None
+                return
+
+        self.server.newConnection.connect(self._on_new_connection)
+
+    def cleanup(self) -> None:
+        if self.server is not None:
+            self.server.close()
+            QLocalServer.removeServer(self.server_name)
+            self.server = None
+
+    def _on_new_connection(self) -> None:
+        if self.server is None:
+            return
+
+        while self.server.hasPendingConnections():
+            socket = self.server.nextPendingConnection()
+            if socket is None:
+                return
+            socket.disconnected.connect(
+                lambda sock=socket: self._process_connection_payload(sock)
+            )
+
+    def _process_connection_payload(self, socket: QLocalSocket) -> None:
+        if self.main_window is None:
+            socket.deleteLater()
+            return
+
+        try:
+            raw = bytes(socket.readAll()).decode("utf-8", errors="ignore").strip()
+            if not raw:
+                return
+
+            payload = json.loads(raw)
+            self.logger.info("Forwarded request received by running ACCELA instance")
+            QTimer.singleShot(
+                0, lambda data=payload: self.main_window.handle_external_command(data)
+            )
+        except json.JSONDecodeError as exc:
+            self.logger.warning(f"Invalid single-instance payload received: {exc}")
+        finally:
+            socket.deleteLater()
 
 
 def main():
@@ -163,6 +292,20 @@ def main():
             return run_cli_mode(app, command_line_zips, logger)
 
     # -------------------------------------------------------------------------
+    # Single Instance Coordination
+    # -------------------------------------------------------------------------
+    instance_payload = {
+        "zip_files": command_line_zips,
+        "appid": command_line_appid,
+        "start_hidden": start_hidden,
+        "activate": bool(command_line_zips or command_line_appid or not start_hidden),
+    }
+    instance_coordinator = SingleInstanceCoordinator(logger)
+    if instance_coordinator.forward_to_primary(instance_payload):
+        logger.info("Existing ACCELA instance detected; forwarded request and exiting.")
+        return None
+
+    # -------------------------------------------------------------------------
     # GUI Mode Initialization
     # -------------------------------------------------------------------------
 
@@ -214,6 +357,9 @@ def main():
     # -------------------------------------------------------------------------
     try:
         main_win = MainWindow(start_hidden=start_hidden)
+        instance_coordinator.start_listening(main_win)
+        app.aboutToQuit.connect(instance_coordinator.cleanup)
+        _cleanup_duplicate_gui_instances(logger)
         main_win.show()
         QTimer.singleShot(0, main_win.apply_startup_visibility)
         logger.info("Main window displayed successfully.")
@@ -222,49 +368,14 @@ def main():
         # Post-Launch Processing
         # ---------------------------------------------------------------------
         if command_line_zips or command_line_appid:
-
-            def threaded_manifest_download(appid):
-                """Background thread to handle network I/O."""
-                try:
-                    logger.info(
-                        f"Downloading manifest for AppID {appid} (Background Thread)"
-                    )
-                    zip_file, error = download_manifest(appid)
-                    if error:
-                        logger.error(f"Failed to download manifest: {error}")
-                        return
-
-                    # Schedule the UI update on the main thread
-                    # We use QMetaObject.invokeMethod to safely cross thread boundaries
-                    QMetaObject.invokeMethod(
-                        main_win,
-                        "add_job_safely",
-                        Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, zip_file),
-                    )
-                except Exception as ex:
-                    logger.error(f"Threaded download failed: {ex}")
-
             def process_command_line_args():
                 """Dispatcher for command line args."""
                 if command_line_appid:
-                    t = threading.Thread(
-                        target=threaded_manifest_download,
-                        args=(command_line_appid,),
-                        daemon=True,
-                    )
-                    t.start()
+                    main_win.queue_manifest_download(command_line_appid)
                 else:
                     logger.info(f"Adding {len(command_line_zips)} ZIP file(s) to queue")
                     for zip_file in command_line_zips:
-                        main_win.job_queue.add_job(zip_file)
-
-            def add_job_safely_patch(path):
-                logger.info(f"Adding to queue: {os.path.basename(path)}")
-                main_win.job_queue.add_job(path)
-
-            # Monkey-patching the method onto the instance for safety
-            main_win.add_job_safely = add_job_safely_patch
+                        main_win.add_job_safely(zip_file)
 
             QTimer.singleShot(0, process_command_line_args)
 

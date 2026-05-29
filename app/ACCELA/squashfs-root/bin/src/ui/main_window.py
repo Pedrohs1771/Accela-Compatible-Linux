@@ -1,6 +1,8 @@
 import atexit
 import logging
+import os
 import sys
+import threading
 from collections import deque
 from typing import Dict, Optional
 
@@ -50,6 +52,7 @@ from ui.dialogs.update_center import UpdateCenterDialog
 from utils.logger import qt_log_handler
 from utils.paths import Paths
 from utils.settings import get_settings
+from core.morrenus_api import download_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +192,7 @@ class MainWindow(QMainWindow):
     def _setup_window_properties(self) -> None:
         """Configure basic window properties."""
         self.setObjectName("accela")
+        self.setWindowRole("accela")
         self.setWindowTitle("ACCELA")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setGeometry(100, 100, 800, 600)
@@ -367,6 +371,53 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def add_job_safely(self, path: str) -> None:
+        if not path:
+            return
+        logger.info(f"Adding to queue: {os.path.basename(path)}")
+        self.job_queue.add_job(path)
+
+    def queue_manifest_download(self, appid: int) -> None:
+        if not appid:
+            return
+
+        def threaded_manifest_download() -> None:
+            try:
+                logger.info(
+                    f"Downloading manifest for AppID {appid} (Background Thread)"
+                )
+                zip_file, error = download_manifest(appid)
+                if error:
+                    logger.error(f"Failed to download manifest: {error}")
+                    return
+
+                QTimer.singleShot(0, lambda: self.add_job_safely(zip_file))
+            except Exception as exc:
+                logger.error(f"Threaded download failed: {exc}", exc_info=True)
+
+        threading.Thread(target=threaded_manifest_download, daemon=True).start()
+
+    def handle_external_command(self, payload: dict) -> None:
+        if not isinstance(payload, dict):
+            return
+
+        zip_files = payload.get("zip_files") or []
+        appid = payload.get("appid")
+        activate = payload.get("activate", True)
+
+        if activate:
+            self.show_from_tray()
+
+        if appid:
+            try:
+                self.queue_manifest_download(int(appid))
+            except (TypeError, ValueError):
+                logger.warning(f"Invalid AppID received from external request: {appid}")
+
+        for zip_file in zip_files:
+            if zip_file and os.path.exists(zip_file):
+                self.add_job_safely(zip_file)
 
     def _show_library_from_tray(self) -> None:
         self.show_from_tray()

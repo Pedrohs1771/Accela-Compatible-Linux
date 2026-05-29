@@ -6,4 +6,6 @@ Icon=accela
 Terminal=false
 Type=Application
 Categories=Game;
+StartupNotify=true
+StartupWMClass=accela
 MimeType=x-scheme-handler/accela;

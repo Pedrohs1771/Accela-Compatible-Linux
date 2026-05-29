@@ -6,7 +6,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -17,6 +20,12 @@ from PyQt6.QtWidgets import (
 )
 
 from utils.image_fetcher import ImageFetcher
+from utils.proton_tools import (
+    build_default_proton_selection,
+    choose_default_proton_tool,
+    depot_selection_requires_proton,
+    discover_proton_tools,
+)
 from ui.dialogs.dialog_helpers import create_standard_buttons
 
 logger = logging.getLogger(__name__)
@@ -166,10 +175,99 @@ class DepotSelectionDialog(QDialog):
         button_layout.addWidget(deselect_all_button)
         content_widget.addLayout(button_layout)
 
+        self.proton_checkbox = None
+        self.proton_combo = None
+        self._proton_tools = []
+        if sys.platform == "linux":
+            self._build_proton_section(content_widget)
+
         buttons = create_standard_buttons(self._accept_with_validation, self.reject)
         content_widget.addWidget(buttons)
 
         layout.addLayout(content_widget)
+        self._refresh_proton_section()
+
+    def _build_proton_section(self, parent_layout):
+        self._proton_tools = discover_proton_tools()
+
+        container = QFrame()
+        container.setObjectName("protonCompatibilitySection")
+        section_layout = QVBoxLayout(container)
+        section_layout.setContentsMargins(10, 10, 10, 10)
+        section_layout.setSpacing(6)
+
+        title = QLabel("Compatibilidade Steam")
+        section_layout.addWidget(title)
+
+        self.proton_checkbox = QCheckBox("Forcar Proton para depots Windows")
+        self.proton_checkbox.setChecked(True)
+        self.proton_checkbox.toggled.connect(self._refresh_proton_section)
+        section_layout.addWidget(self.proton_checkbox)
+
+        tool_row = QHBoxLayout()
+        tool_label = QLabel("Ferramenta:")
+        tool_row.addWidget(tool_label)
+
+        self.proton_combo = QComboBox()
+        self.proton_combo.setMinimumWidth(220)
+        tool_row.addWidget(self.proton_combo, 1)
+        section_layout.addLayout(tool_row)
+
+        help_label = QLabel(
+            "ACCELA aplica o modo de compatibilidade da Steam usando Proton "
+            "Experimental por padrao quando houver depots Windows."
+        )
+        help_label.setWordWrap(True)
+        section_layout.addWidget(help_label)
+
+        for tool in self._proton_tools:
+            self.proton_combo.addItem(tool.display_name, tool.internal_name)
+
+        default_tool = choose_default_proton_tool(self._proton_tools)
+        if default_tool is not None:
+            index = self.proton_combo.findData(default_tool.internal_name)
+            if index >= 0:
+                self.proton_combo.setCurrentIndex(index)
+
+        parent_layout.addWidget(container)
+
+    def _refresh_proton_section(self):
+        if not self.proton_checkbox or not self.proton_combo:
+            return
+
+        selected_depots = self.get_selected_depots()
+        requires_proton = depot_selection_requires_proton(selected_depots, self.depots)
+        proton_available = bool(self._proton_tools)
+        enabled = requires_proton and proton_available
+
+        self.proton_checkbox.setEnabled(enabled)
+        self.proton_combo.setEnabled(enabled and self.proton_checkbox.isChecked())
+
+        if requires_proton and not proton_available:
+            self.proton_checkbox.setToolTip(
+                "Nenhum Proton foi encontrado na Steam desta maquina."
+            )
+        else:
+            self.proton_checkbox.setToolTip("")
+
+    def get_proton_preferences(self):
+        defaults = build_default_proton_selection(self.get_selected_depots(), self.depots)
+        if not self.proton_checkbox or not self.proton_combo:
+            return defaults
+
+        selected_name = self.proton_combo.currentData() or ""
+        selected_text = self.proton_combo.currentText() or ""
+        defaults["force_proton"] = bool(
+            defaults["force_proton"]
+            and self.proton_checkbox.isEnabled()
+            and self.proton_checkbox.isChecked()
+            and selected_name
+        )
+        defaults["proton_tool_name"] = selected_name if defaults["force_proton"] else ""
+        defaults["proton_tool_display_name"] = (
+            selected_text if defaults["force_proton"] else ""
+        )
+        return defaults
 
     @staticmethod
     def _normalize_os_value(os_val):
@@ -310,6 +408,21 @@ class DepotSelectionDialog(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
+        if (
+            sys.platform == "linux"
+            and depot_selection_requires_proton(selected_depots, self.depots)
+            and self.proton_checkbox is not None
+            and self.proton_checkbox.isChecked()
+            and not self._proton_tools
+        ):
+            QMessageBox.warning(
+                self,
+                "Proton nao encontrado",
+                "Voce selecionou depots Windows, mas nenhum Proton foi detectado na Steam. "
+                "Instale ao menos o Proton Experimental e tente novamente.",
+            )
+            return
+
         self.accept()
 
     def on_depot_item_clicked(self, item):
@@ -351,6 +464,8 @@ class DepotSelectionDialog(QDialog):
             item.setCheckState(new_state)
             self.anchor_row = current_row
 
+        self._refresh_proton_section()
+
     def _toggle_all_checkboxes(self, check=True):
         state = Qt.CheckState.Checked if check else Qt.CheckState.Unchecked
         self.list_widget.blockSignals(True)
@@ -361,6 +476,7 @@ class DepotSelectionDialog(QDialog):
         self.list_widget.blockSignals(False)
 
         self.anchor_row = -1
+        self._refresh_proton_section()
 
     def _fetch_header_image(self, app_id):
         self._current_app_id = app_id
