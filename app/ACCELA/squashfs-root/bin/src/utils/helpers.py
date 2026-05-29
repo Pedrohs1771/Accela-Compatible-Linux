@@ -687,7 +687,7 @@ class CheckboxSetting(QWidget):
             # Use tooltip both as hover tooltip and as visible explanatory label
             self.checkbox.setToolTip(tooltip)
             self.explanation_label = QLabel(tooltip)
-            self.explanation_label.setStyleSheet("color: #888888; font-size: 11px;")
+            self.explanation_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
             self.explanation_label.setWordWrap(True)
             # Add checkbox and then an indented explanation label using
             # an inner HBoxLayout
@@ -805,7 +805,7 @@ def create_font_setting(
         current_font = QFont()
         current_font.setFamily(parent_widget.settings.value("font", "TrixieCyrG-Plain"))
         current_font.setPointSize(
-            parent_widget.settings.value("font-size", 10, type=int)
+            max(12, parent_widget.settings.value("font-size", 10, type=int))
         )
 
         font_style = parent_widget.settings.value("font-style", "Normal")
@@ -849,7 +849,7 @@ def create_font_setting(
 def create_font_from_settings(settings) -> QFont:
     """Create a QFont object from application settings."""
     font_family = settings.value("font", "TrixieCyrG-Plain")
-    font_size = settings.value("font-size", 10, type=int)
+    font_size = max(12, settings.value("font-size", 10, type=int))
     font_style = settings.value("font-style", "Normal")
 
     font = QFont(font_family)

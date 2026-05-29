@@ -198,9 +198,9 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Configurações")
-        self.setMinimumWidth(525)
-        self.setMinimumHeight(650)
-        self.resize(525, 650)
+        self.setMinimumWidth(860)
+        self.setMinimumHeight(720)
+        self.resize(920, 760)
         self.settings = get_settings()
         self.main_window = parent
         self.accent_color = self.settings.value("accent_color", "#C06C84")
@@ -290,6 +290,7 @@ class SettingsDialog(QDialog):
 
     def _setup_ui(self) -> None:
         """Initialize the UI layout."""
+        self._apply_dialog_readability_style()
         self.main_layout = QVBoxLayout(self)
 
         self._create_tab_widget()
@@ -306,6 +307,7 @@ class SettingsDialog(QDialog):
     def _create_tab_widget(self) -> None:
         """Create and style the tab widget."""
         self.tab_widget = QTabWidget()
+        self.tab_widget.tabBar().setExpanding(False)
         bg_color = self.settings.value("background_color", "#1E1E1E")
         self.tab_widget.setStyleSheet(
             f"""
@@ -315,8 +317,10 @@ class SettingsDialog(QDialog):
             QTabBar::tab {{
                 background: {bg_color};
                 color: #888888;
-                padding: 8px 16px;
+                padding: 10px 16px;
                 border: none;
+                font-size: 13px;
+                font-weight: 700;
             }}
             QTabBar::tab:selected {{
                 color: {self.accent_color};
@@ -336,10 +340,49 @@ class SettingsDialog(QDialog):
         self._create_automation_tab()
         self._create_opencloudsave_tab()
         self._create_discord_tab()
-        self._create_updates_tab()
         self._create_tools_tab()
         self._create_audio_tab()
         self._create_style_tab()
+
+    def _apply_dialog_readability_style(self) -> None:
+        bg_color = self.settings.value("background_color", "#000000")
+        accent_color = self.settings.value("accent_color", "#C06C84")
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background-color: {bg_color};
+            }}
+            QLabel, QCheckBox, QPushButton, QLineEdit, QSpinBox, QGroupBox {{
+                font-size: 13px;
+                font-family: "DejaVu Sans Mono";
+            }}
+            QGroupBox {{
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                margin-top: 14px;
+                padding-top: 16px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+                color: {accent_color};
+                font-size: 14px;
+                font-weight: 700;
+            }}
+            QLineEdit, QSpinBox {{
+                min-height: 36px;
+                padding: 6px 10px;
+                border: 1px solid {accent_color};
+                color: {accent_color};
+                background-color: {bg_color};
+                selection-background-color: {accent_color};
+            }}
+            QPushButton {{
+                min-height: 36px;
+                padding: 6px 12px;
+            }}
+            """
+        )
 
     def _create_dialog_buttons(self) -> None:
         """Create standard Ok/Cancel buttons."""
@@ -389,7 +432,7 @@ class SettingsDialog(QDialog):
             layout.addWidget(help_label)
         elif help_text:
             help_label = QLabel(help_text)
-            help_label.setStyleSheet("color: #888888; font-size: 11px;")
+            help_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
             layout.addWidget(help_label)
 
         return layout, api_key_input
@@ -808,7 +851,7 @@ class SettingsDialog(QDialog):
             "Modo stealth usa a bandeja do sistema. Se seu ambiente não expor tray, o ACCELA apenas iniciará minimizado."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888888; font-size: 11px;")
+        hint.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         layout.addWidget(hint)
 
         layout.addStretch()
@@ -889,7 +932,7 @@ class SettingsDialog(QDialog):
             "Os caminhos de save por jogo são configurados na Biblioteca do ACCELA, dentro da aba OpenCloudSave de cada jogo."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888888; font-size: 11px;")
+        hint.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         layout.addWidget(hint)
 
         layout.addStretch()
@@ -962,7 +1005,7 @@ class SettingsDialog(QDialog):
 
         self.update_environment_label = QLabel("Sistema: analisando ambiente local...")
         self.update_environment_label.setWordWrap(True)
-        self.update_environment_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.update_environment_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         updates_layout.addWidget(self.update_environment_label)
 
         updates_layout.addWidget(QLabel("Repositório"))
@@ -1006,17 +1049,17 @@ class SettingsDialog(QDialog):
 
         self.update_status_label = QLabel("Aguardando verificação.")
         self.update_status_label.setWordWrap(True)
-        self.update_status_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.update_status_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         updates_layout.addWidget(self.update_status_label)
 
         self.update_security_label = QLabel("Assinatura: aguardando verificação.")
         self.update_security_label.setWordWrap(True)
-        self.update_security_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.update_security_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         updates_layout.addWidget(self.update_security_label)
 
         self.update_backup_label = QLabel("Rollback: analisando backups locais...")
         self.update_backup_label.setWordWrap(True)
-        self.update_backup_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.update_backup_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         updates_layout.addWidget(self.update_backup_label)
 
         buttons_layout = QHBoxLayout()
@@ -1146,7 +1189,7 @@ class SettingsDialog(QDialog):
     def _add_tool_explanation(layout: QVBoxLayout, text: str) -> None:
         """Helper to add explanation label."""
         lbl = QLabel(text)
-        lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        lbl.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
 
@@ -1268,7 +1311,7 @@ class SettingsDialog(QDialog):
     def _add_checkbox_explanation(layout: QVBoxLayout, text: str) -> None:
         """Add indented explanation text for checkboxes."""
         lbl = QLabel(text)
-        lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        lbl.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         lbl.setWordWrap(True)
         h_layout = QHBoxLayout()
         h_layout.setContentsMargins(0, 0, 0, 0)
@@ -1375,7 +1418,6 @@ class SettingsDialog(QDialog):
         self._save_automation_settings()
         self._save_opencloudsave_settings()
         self._save_discord_settings()
-        self._save_update_settings()
         if not self._save_style_settings():
             return  # Style validation failed
         if self.main_window and hasattr(self.main_window, "system_integration"):
@@ -1711,8 +1753,8 @@ class SettingsDialog(QDialog):
         mis = status.get("steamclient_mismatch")
         fnd = status.get("steamclient_found")
         err = status.get("steamclient_error")
-        pink = "color: #C06C84; font-size: 11px;"
-        green = "color: #7FC97F; font-size: 11px;"
+        pink = "color: #C06C84; font-size: 13px;"
+        green = "color: #7FC97F; font-size: 13px;"
 
         if mis:
             lbl.setText("Seu cliente Steam não é compatível.")

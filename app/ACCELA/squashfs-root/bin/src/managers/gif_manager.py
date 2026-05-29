@@ -922,6 +922,13 @@ class GIFManager:
     def _create_color_symlink(symlink_path, target_path):
         """Create symlink pointing to colorized file"""
         try:
+            if symlink_path.exists():
+                try:
+                    if symlink_path.resolve() == target_path.resolve():
+                        return True
+                except OSError:
+                    pass
+
             if symlink_path.exists() or symlink_path.is_symlink():
                 symlink_path.unlink()
 
@@ -932,6 +939,11 @@ class GIFManager:
         except Exception as e:
             logger.warning(f"Symlink failed for {symlink_path.name}: {e}")
             try:
+                try:
+                    if symlink_path.exists() and symlink_path.resolve() == target_path.resolve():
+                        return True
+                except OSError:
+                    pass
                 shutil.copy2(target_path, symlink_path)
                 return True
             except (OSError, shutil.Error) as copy_error:

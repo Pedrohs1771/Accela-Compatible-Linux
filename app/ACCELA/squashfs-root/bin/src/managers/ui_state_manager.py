@@ -299,8 +299,8 @@ class UIStateManager:
         # Load font family
         font_family = self.settings.value("font", "TrixieCyrG-Plain")
 
-        # Load size (default 10). If Sonic mode and user left default 10, bump to 12
-        font_size = self.settings.value("font-size", 10, type=int)
+        # Keep the visual style, but enforce a readable floor.
+        font_size = max(12, self.settings.value("font-size", 10, type=int))
 
         # Create font
         font = QFont(font_family)
@@ -361,7 +361,7 @@ class UIStateManager:
 
     def _apply_accent_color(self):
         """Apply accent color to UI elements"""
-        accent_style = f"color: {self.main_window.accent_color};"
+        accent_style = f"color: {self.main_window.accent_color}; font-size: 12pt;"
 
         # Drop text label
         self.main_window.drop_text_label.setStyleSheet(accent_style)
@@ -376,7 +376,9 @@ class UIStateManager:
         self.main_window.update_progress_bar_style()
 
         # Log output
-        self.main_window.log_output.setStyleSheet(accent_style)
+        self.main_window.log_output.setStyleSheet(
+            f"color: {self.main_window.accent_color}; font-size: 12pt; font-family: 'DejaVu Sans Mono';"
+        )
 
         # Bottom titlebar
         if hasattr(self.main_window, "bottom_titlebar"):

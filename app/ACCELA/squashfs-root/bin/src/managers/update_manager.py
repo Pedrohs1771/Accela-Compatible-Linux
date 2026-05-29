@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -23,10 +24,12 @@ class UpdateManager(QObject):
 
     status_changed = pyqtSignal(str)
     release_detected = pyqtSignal(object)
+    update_available_changed = pyqtSignal(bool)
 
     DEFAULT_REPO = "Pedrohs1771/Accela-Compatible-Linux"
     DEFAULT_BRANCH = "main"
     MANIFEST_PATH = "release/latest.json"
+    CHECK_CACHE_TTL_SECONDS = 300
 
     def __init__(self, main_window):
         super().__init__(parent=main_window)
@@ -37,6 +40,11 @@ class UpdateManager(QObject):
         self.security_message = "Assinatura e SHA256 ainda não verificados."
         self._check_in_progress = False
         self._install_in_progress = False
+        self._update_available = False
+        self._last_check_at = 0.0
+        self._last_check_interactive = False
+        self._last_check_payload: Optional[Dict[str, object]] = None
+        self._prepare_timer: Optional[QTimer] = None
         self.release_detected.connect(self._handle_release_detected)
 
     @property
@@ -44,7 +52,12 @@ class UpdateManager(QObject):
         return app_version
 
     def reload_settings(self) -> None:
-        pass
+        self._last_check_at = 0.0
+        self._last_check_payload = None
+
+    @classmethod
+    def _version_metadata_file(cls) -> Path:
+        return cls._base_path() / "VERSION.json"
 
     def get_repo_slug(self) -> str:
         configured = self.settings.value(
@@ -80,6 +93,16 @@ class UpdateManager(QObject):
     def get_installed_revision(self) -> str:
         revision_file = self._revision_file()
         if not revision_file.exists():
+            metadata_path = self._version_metadata_file()
+            if metadata_path.exists():
+                try:
+                    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    return str(payload.get("commit_sha", "")).strip()
+                except (OSError, json.JSONDecodeError):
+                    logger.warning(
+                        "Failed to read VERSION.json for installed revision",
+                        exc_info=True,
+                    )
             return ""
 
         try:
@@ -87,6 +110,9 @@ class UpdateManager(QObject):
         except OSError:
             logger.warning("Failed to read installed repo revision", exc_info=True)
             return ""
+
+    def is_update_available(self) -> bool:
+        return self._update_available
 
     def available_backups(self) -> List[Path]:
         root = self._backups_root()
@@ -113,6 +139,12 @@ class UpdateManager(QObject):
     def get_security_summary(self) -> str:
         return self.security_message
 
+    def _set_update_available(self, available: bool) -> None:
+        if self._update_available == available:
+            return
+        self._update_available = available
+        self.update_available_changed.emit(available)
+
     def schedule_startup_check(self) -> None:
         enabled = self.settings.value("github_updates_enabled", True, type=bool)
         if not enabled:
@@ -121,6 +153,30 @@ class UpdateManager(QObject):
 
     def check_for_updates_async(self, interactive: bool = False) -> None:
         if self._check_in_progress:
+            return
+
+        if (
+            not interactive
+            and self._last_check_payload is not None
+            and (time.time() - self._last_check_at) < self.CHECK_CACHE_TTL_SECONDS
+        ):
+            self.latest_release = dict(self._last_check_payload.get("release", {})) or None
+            self.security_message = str(
+                self._last_check_payload.get(
+                    "security_message",
+                    "Assinatura e SHA256 ainda não verificados.",
+                )
+            )
+            self._set_update_available(
+                bool(self._last_check_payload.get("update_available", False))
+            )
+            self._set_status(
+                str(
+                    self._last_check_payload.get(
+                        "status_message", "Verificação recente reaproveitada."
+                    )
+                )
+            )
             return
 
         self._check_in_progress = True
@@ -159,7 +215,7 @@ class UpdateManager(QObject):
             f"Instalando {release.get('display_name', release.get('tag_name', 'novo update'))}..."
         )
 
-        script_path = self._write_update_script(release)
+        script_path, status_dir = self._write_update_script(release)
         try:
             subprocess.Popen(
                 ["bash", str(script_path)],
@@ -173,7 +229,7 @@ class UpdateManager(QObject):
             self._set_status(f"Falha ao iniciar a atualização: {exc}")
             return False
 
-        QTimer.singleShot(800, lambda: self.main_window.request_quit("self_update"))
+        self._monitor_prepared_update(status_dir)
         return True
 
     def rollback_to_latest_backup(self) -> bool:
@@ -199,14 +255,71 @@ class UpdateManager(QObject):
         QTimer.singleShot(800, lambda: self.main_window.request_quit("rollback"))
         return True
 
+    def _monitor_prepared_update(self, status_dir: Path) -> None:
+        start_time = time.time()
+        ready_file = status_dir / "ready"
+        failed_file = status_dir / "failed"
+        error_file = status_dir / "error.txt"
+
+        if self._prepare_timer is not None:
+            self._prepare_timer.stop()
+            self._prepare_timer.deleteLater()
+
+        self._prepare_timer = QTimer(self)
+        self._prepare_timer.setInterval(300)
+
+        def poll() -> None:
+            if ready_file.exists():
+                self._prepare_timer.stop()
+                self._set_status("Update validado. Fechando ACCELA para aplicar a troca.")
+                QTimer.singleShot(200, lambda: self.main_window.request_quit("self_update"))
+                return
+
+            if failed_file.exists():
+                self._prepare_timer.stop()
+                self._install_in_progress = False
+                reason = "O pacote remoto falhou na validação."
+                if error_file.exists():
+                    try:
+                        reason = error_file.read_text(encoding="utf-8").strip() or reason
+                    except OSError:
+                        pass
+                self._set_status(f"Update bloqueado: {reason}")
+                QMessageBox.warning(
+                    self.main_window,
+                    "Atualizações",
+                    f"Update bloqueado antes da troca:\n\n{reason}",
+                )
+                return
+
+            if (time.time() - start_time) > 120:
+                self._prepare_timer.stop()
+                self._install_in_progress = False
+                self._set_status("Tempo esgotado ao preparar o update.")
+                QMessageBox.warning(
+                    self.main_window,
+                    "Atualizações",
+                    "O preparo do update demorou demais e foi cancelado.",
+                )
+
+        self._prepare_timer.timeout.connect(poll)
+        self._prepare_timer.start()
+
     def _check_worker(self, interactive: bool) -> None:
         try:
+            repo = self.get_repo_slug()
             release = self._fetch_latest_release()
             self.latest_release = release
             self.security_message = self._build_security_summary(release)
             installed_revision = self.get_installed_revision()
             latest_revision = str(release.get("commit_sha", "")).strip()
-            update_available = bool(latest_revision) and installed_revision != latest_revision
+            update_state = self._determine_update_state(
+                repo=repo,
+                installed_revision=installed_revision,
+                latest_revision=latest_revision,
+            )
+            update_available = bool(update_state.get("available", False))
+            self._set_update_available(update_available)
 
             if update_available:
                 self._set_status(
@@ -216,24 +329,36 @@ class UpdateManager(QObject):
                 payload["interactive"] = interactive
                 self.release_detected.emit(payload)
             else:
-                current_label = release.get("display_name", self.current_version)
-                if installed_revision:
-                    current_label = installed_revision[:8]
-                self._set_status(
-                    f"Você já está na versão mais recente ({current_label})."
+                current_label = update_state.get(
+                    "label", release.get("display_name", self.current_version)
                 )
+                message = str(
+                    update_state.get(
+                        "message",
+                        f"Você já está na versão mais recente ({current_label}).",
+                    )
+                )
+                self._set_status(message)
                 if interactive:
                     QTimer.singleShot(
                         0,
                         lambda: QMessageBox.information(
                             self.main_window,
                             "Atualizações",
-                            f"Você já está na versão mais recente ({current_label}).",
+                            message,
                         ),
                     )
+            self._last_check_at = time.time()
+            self._last_check_payload = {
+                "release": dict(release),
+                "security_message": self.security_message,
+                "status_message": self.status_message,
+                "update_available": update_available,
+            }
         except Exception as exc:
             logger.error("Update check failed: %s", exc, exc_info=True)
             self.security_message = "Assinatura/SHA256 indisponíveis nesta verificação."
+            self._set_update_available(False)
             self._set_status(f"Falha ao verificar atualizações: {exc}")
             if interactive:
                 QTimer.singleShot(
@@ -275,6 +400,117 @@ class UpdateManager(QObject):
         if message.exec() == QMessageBox.StandardButton.Yes:
             self.install_update(release)
 
+    def _github_headers(self) -> Dict[str, str]:
+        return {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "ACCELA",
+        }
+
+    def _remote_commit_exists(self, repo: str, commit_sha: str) -> bool:
+        if not commit_sha:
+            return False
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/commits/{commit_sha}",
+            headers=self._github_headers(),
+            timeout=20,
+        )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
+
+    def _determine_update_state(
+        self,
+        repo: str,
+        installed_revision: str,
+        latest_revision: str,
+    ) -> Dict[str, str | bool]:
+        if installed_revision.startswith("local-"):
+            label = installed_revision.split("-")[1][:8] if "-" in installed_revision else "local"
+            return {
+                "available": False,
+                "label": label,
+                "message": f"Build local em desenvolvimento detectada ({label}). Update automático desativado para evitar sobrescrever testes locais.",
+            }
+
+        if len(installed_revision) != 40 or any(ch not in "0123456789abcdef" for ch in installed_revision.lower()):
+            return {
+                "available": False,
+                "label": installed_revision[:8] or "local",
+                "message": "Revisão instalada fora do padrão GitHub. Update automático preservado para evitar sobrescrever uma build não padronizada.",
+            }
+
+        if not latest_revision:
+            return {"available": False, "label": self.current_version, "message": "Manifesto sem revisão remota."}
+
+        if not installed_revision:
+            return {
+                "available": True,
+                "label": latest_revision[:8],
+                "message": "Instalação sem revisão registrada. Update disponível.",
+            }
+
+        if installed_revision == latest_revision:
+            label = installed_revision[:8]
+            return {
+                "available": False,
+                "label": label,
+                "message": f"Você já está na versão mais recente ({label}).",
+            }
+
+        compare_url = (
+            f"https://api.github.com/repos/{repo}/compare/"
+            f"{installed_revision}...{latest_revision}"
+        )
+        response = requests.get(compare_url, headers=self._github_headers(), timeout=30)
+        if response.status_code == 200:
+            payload = response.json()
+            status = str(payload.get("status", "")).strip()
+            ahead_by = int(payload.get("ahead_by", 0) or 0)
+            behind_by = int(payload.get("behind_by", 0) or 0)
+            label = latest_revision[:8]
+
+            if status == "behind" or (behind_by > 0 and ahead_by == 0):
+                return {
+                    "available": True,
+                    "label": label,
+                    "message": f"Atualização disponível: {label}.",
+                }
+
+            if status in {"identical", "ahead"} or ahead_by > 0:
+                return {
+                    "available": False,
+                    "label": installed_revision[:8],
+                    "message": f"Seu ACCELA local já está adiantado em relação ao GitHub ({installed_revision[:8]}).",
+                }
+
+            return {
+                "available": False,
+                "label": installed_revision[:8],
+                "message": "Seu ACCELA local divergiu do GitHub. Update automático foi preservado para evitar downgrade.",
+            }
+
+        if response.status_code == 404:
+            if not self._remote_commit_exists(repo, installed_revision):
+                return {
+                    "available": False,
+                    "label": installed_revision[:8],
+                    "message": f"Build local não publicada no GitHub ({installed_revision[:8]}). Update automático desativado para evitar downgrade.",
+                }
+
+            return {
+                "available": True,
+                "label": latest_revision[:8],
+                "message": f"Atualização disponível: {latest_revision[:8]}.",
+            }
+
+        response.raise_for_status()
+        return {
+            "available": False,
+            "label": installed_revision[:8],
+            "message": f"Não foi possível comparar {installed_revision[:8]} com {latest_revision[:8]}.",
+        }
+
     def _fetch_latest_release(self) -> Dict[str, str]:
         repo = self.get_repo_slug()
         branch_name = self.get_branch_name()
@@ -294,14 +530,10 @@ class UpdateManager(QObject):
         return self._fetch_commit_release(repo, branch_name)
 
     def _fetch_manifest_release(self, repo: str, branch_name: str) -> Dict[str, str]:
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "ACCELA",
-        }
         manifest_url = (
             f"https://raw.githubusercontent.com/{repo}/{branch_name}/{self.MANIFEST_PATH}"
         )
-        response = requests.get(manifest_url, headers=headers, timeout=30)
+        response = requests.get(manifest_url, headers=self._github_headers(), timeout=30)
         response.raise_for_status()
         manifest = response.json()
 
@@ -333,12 +565,8 @@ class UpdateManager(QObject):
         }
 
     def _fetch_commit_release(self, repo: str, branch_name: str) -> Dict[str, str]:
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "ACCELA",
-        }
         commit_url = f"https://api.github.com/repos/{repo}/commits/{branch_name}"
-        response = requests.get(commit_url, headers=headers, timeout=30)
+        response = requests.get(commit_url, headers=self._github_headers(), timeout=30)
         response.raise_for_status()
         commit = response.json()
 
@@ -395,9 +623,11 @@ class UpdateManager(QObject):
             logger.warning("Failed to read public signing key", exc_info=True)
             return ""
 
-    def _write_update_script(self, release: Dict[str, str]) -> Path:
+    def _write_update_script(self, release: Dict[str, str]) -> tuple[Path, Path]:
         temp_dir = Path(tempfile.mkdtemp(prefix="accela-update-"))
         script_path = temp_dir / "apply-update.sh"
+        status_dir = temp_dir / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
         package_url = shlex.quote(
             str(release.get("package_url") or release.get("zip_url") or "")
         )
@@ -410,6 +640,9 @@ class UpdateManager(QObject):
         )
         require_signature = "true" if self.require_signed_updates() else "false"
         public_key_text = self._load_public_key_text()
+        base_dir = shlex.quote(str(self._base_path()))
+        launcher_path = shlex.quote(str(Path.home() / ".local" / "bin" / "accela"))
+        status_dir_quoted = shlex.quote(str(status_dir))
 
         script = f"""#!/usr/bin/env bash
 set -euo pipefail
@@ -420,7 +653,19 @@ HASH_FILE="$WORKDIR/update.sha256"
 SIG_FILE="$WORKDIR/update.sig"
 PUBKEY_FILE="$WORKDIR/public.pem"
 EXTRACT_DIR="$WORKDIR/extracted"
+STATUS_DIR={status_dir_quoted}
+READY_FILE="$STATUS_DIR/ready"
+FAILED_FILE="$STATUS_DIR/failed"
+ERROR_FILE="$STATUS_DIR/error.txt"
+BASE_DIR={base_dir}
+LAUNCHER={launcher_path}
 mkdir -p "$EXTRACT_DIR"
+
+fail_update() {{
+    printf '%s\\n' "$1" > "$ERROR_FILE"
+    : > "$FAILED_FILE"
+    exit 1
+}}
 
 download() {{
     local url="$1"
@@ -430,22 +675,65 @@ download() {{
         return 1
     fi
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$target"
+        curl -fL --retry 3 -C - "$url" -o "$target"
         return 0
     fi
     if command -v wget >/dev/null 2>&1; then
-        wget -qO "$target" "$url"
+        wget -c -O "$target" "$url"
         return 0
     fi
-    echo "Nem curl nem wget estão disponíveis." >&2
-    exit 1
+    fail_update "Nem curl nem wget estão disponíveis."
 }}
 
-download {package_url} "$ARCHIVE"
+healthcheck() {{
+    local source_dir="$1"
+    [ -f "$source_dir/install.sh" ] || fail_update "Pacote do GitHub sem install.sh."
+    [ -f "$source_dir/app/ACCELA/squashfs-root/AppRun" ] || fail_update "Pacote sem AppRun."
+    [ -f "$source_dir/app/ACCELA/squashfs-root/bin/run.sh" ] || fail_update "Pacote sem run.sh."
+    bash -n "$source_dir/install.sh" || fail_update "install.sh inválido."
+    bash -n "$source_dir/app/ACCELA/squashfs-root/AppRun" || fail_update "AppRun inválido."
+    bash -n "$source_dir/app/ACCELA/squashfs-root/bin/run.sh" || fail_update "run.sh inválido."
+    python3 -m compileall "$source_dir/app/ACCELA/squashfs-root/bin/src" >/dev/null || fail_update "Código Python do update não compila."
+    if command -v desktop-file-validate >/dev/null 2>&1; then
+        desktop-file-validate "$source_dir/app/ACCELA/squashfs-root/ACCELA.desktop" >/dev/null 2>&1 || fail_update ".desktop do update é inválido."
+    fi
+}}
+
+restore_backup() {{
+    local backup_dir="$1"
+    [ -d "$backup_dir" ] || return 0
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete --exclude 'backups' "$backup_dir/" "$BASE_DIR/"
+        return 0
+    fi
+    python3 - "$backup_dir" "$BASE_DIR" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+backup = Path(sys.argv[1])
+base = Path(sys.argv[2])
+for child in base.iterdir():
+    if child.name == "backups":
+        continue
+    if child.is_dir():
+        shutil.rmtree(child, ignore_errors=True)
+    else:
+        child.unlink(missing_ok=True)
+for child in backup.iterdir():
+    target = base / child.name
+    if child.is_dir():
+        shutil.copytree(child, target, dirs_exist_ok=True)
+    else:
+        shutil.copy2(child, target)
+PY
+}}
+
+download {package_url} "$ARCHIVE" || fail_update "Falha ao baixar o pacote do update."
 
 if [ -n {sha256_url} ]; then
-    download {sha256_url} "$HASH_FILE"
-    python3 - "$ARCHIVE" "$HASH_FILE" <<'PY'
+    download {sha256_url} "$HASH_FILE" || fail_update "Falha ao baixar o SHA256."
+    if ! python3 - "$ARCHIVE" "$HASH_FILE" <<'PY'
 import hashlib
 import pathlib
 import sys
@@ -457,24 +745,25 @@ actual = hashlib.sha256(archive.read_bytes()).hexdigest()
 if expected != actual:
     raise SystemExit(f"SHA256 inválido: esperado {{expected}}, obtido {{actual}}")
 PY
+    then
+        fail_update "SHA256 inválido."
+    fi
 fi
 
 if [ -n {signature_url} ]; then
-    download {signature_url} "$SIG_FILE"
+    download {signature_url} "$SIG_FILE" || fail_update "Falha ao baixar a assinatura."
     cat > "$PUBKEY_FILE" <<'PEM'
 {public_key_text}
 PEM
     if ! command -v openssl >/dev/null 2>&1; then
-        echo "openssl não está disponível para validar a assinatura." >&2
-        exit 1
+        fail_update "openssl não está disponível para validar a assinatura."
     fi
-    openssl dgst -sha256 -verify "$PUBKEY_FILE" -signature "$SIG_FILE" "$ARCHIVE" >/dev/null
+    openssl dgst -sha256 -verify "$PUBKEY_FILE" -signature "$SIG_FILE" "$ARCHIVE" >/dev/null || fail_update "Assinatura inválida."
 elif [ {require_signature} = "true" ]; then
-    echo "Update bloqueado: assinatura ausente e política local exige assinatura válida." >&2
-    exit 1
+    fail_update "Update bloqueado: assinatura ausente e política local exige assinatura válida."
 fi
 
-python3 - "$ARCHIVE" "$EXTRACT_DIR" <<'PY'
+if ! python3 - "$ARCHIVE" "$EXTRACT_DIR" <<'PY'
 import sys
 import zipfile
 
@@ -482,24 +771,63 @@ archive, target = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(archive) as zf:
     zf.extractall(target)
 PY
-
-SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/install.sh" ]; then
-    echo "Pacote do GitHub sem install.sh." >&2
-    exit 1
+then
+    fail_update "Falha ao extrair o pacote do update."
 fi
+
+SRC_DIR="$EXTRACT_DIR"
+if [ ! -f "$SRC_DIR/install.sh" ]; then
+    SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+fi
+if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/install.sh" ]; then
+    fail_update "Pacote do GitHub sem install.sh."
+fi
+
+healthcheck "$SRC_DIR"
+: > "$READY_FILE"
 
 while kill -0 {current_pid} >/dev/null 2>&1; do
     sleep 1
 done
 
 chmod +x "$SRC_DIR/install.sh"
-bash "$SRC_DIR/install.sh" --no-prompt --source-revision {source_revision} --source-version {source_version}
-"$HOME/.local/bin/accela" >/dev/null 2>&1 &
+BACKUP_DIR=""
+if [ -d "$BASE_DIR/squashfs-root" ]; then
+    BACKUP_DIR="$(mktemp -d)"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete --exclude 'backups' "$BASE_DIR/" "$BACKUP_DIR/"
+    else
+        python3 - "$BASE_DIR" "$BACKUP_DIR" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+base = Path(sys.argv[1])
+backup = Path(sys.argv[2])
+for child in base.iterdir():
+    if child.name == "backups":
+        continue
+    target = backup / child.name
+    if child.is_dir():
+        shutil.copytree(child, target, dirs_exist_ok=True)
+    else:
+        shutil.copy2(child, target)
+PY
+    fi
+fi
+
+if ! bash "$SRC_DIR/install.sh" --no-prompt --source-revision {source_revision} --source-version {source_version}; then
+    if [ -n "$BACKUP_DIR" ]; then
+        restore_backup "$BACKUP_DIR"
+    fi
+    fail_update "A instalação do update falhou. Backup restaurado automaticamente."
+fi
+
+"$LAUNCHER" >/dev/null 2>&1 &
 """
         script_path.write_text(script, encoding="utf-8")
         os.chmod(script_path, 0o755)
-        return script_path
+        return script_path, status_dir
 
     def _write_rollback_script(self, backup_dir: Path) -> Path:
         temp_dir = Path(tempfile.mkdtemp(prefix="accela-rollback-"))

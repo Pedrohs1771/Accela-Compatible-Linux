@@ -46,6 +46,7 @@ from ui.dialogs.gamelibrary import GameLibraryDialog
 from ui.dialogs.lain import LainMinigameDialog
 from ui.dialogs.settings import SettingsDialog
 from ui.dialogs.status import StatusDialog
+from ui.dialogs.update_center import UpdateCenterDialog
 from utils.logger import qt_log_handler
 from utils.paths import Paths
 from utils.settings import get_settings
@@ -187,6 +188,7 @@ class MainWindow(QMainWindow):
 
     def _setup_window_properties(self) -> None:
         """Configure basic window properties."""
+        self.setObjectName("accela")
         self.setWindowTitle("ACCELA")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setGeometry(100, 100, 800, 600)
@@ -284,6 +286,9 @@ class MainWindow(QMainWindow):
         if self.system_integration:
             self.system_integration.steam_closed.connect(self._handle_steam_closed)
         if self.update_manager:
+            self.update_manager.update_available_changed.connect(
+                self._handle_update_available_changed
+            )
             self.update_manager.schedule_startup_check()
 
     def _setup_system_tray(self) -> None:
@@ -416,6 +421,9 @@ class MainWindow(QMainWindow):
         if self.titlebar_position != "top":
             self.bottom_titlebar = BottomTitleBar(self)
             self.layout.addWidget(self.bottom_titlebar)
+        self._handle_update_available_changed(
+            self.update_manager.is_update_available() if self.update_manager else False
+        )
 
         self.setAcceptDrops(True)
 
@@ -611,6 +619,14 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         dialog = SettingsDialog(self)
         dialog.exec()
+
+    def open_update_center(self) -> None:
+        dialog = UpdateCenterDialog(self)
+        dialog.exec()
+
+    def _handle_update_available_changed(self, available: bool) -> None:
+        if self.bottom_titlebar is not None:
+            self.bottom_titlebar.set_update_badge_visible(available)
 
     def open_fetch_dialog(self) -> None:
         self.ui_state.fetch_dialog = FetchManifestDialog(self)

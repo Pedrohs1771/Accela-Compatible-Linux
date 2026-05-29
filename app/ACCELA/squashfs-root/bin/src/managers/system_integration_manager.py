@@ -86,6 +86,7 @@ class SystemIntegrationManager(QObject):
             "Terminal=false\n"
             "Categories=Game;Utility;\n"
             "StartupNotify=false\n"
+            "StartupWMClass=accela\n"
             "X-GNOME-Autostart-enabled=true\n"
         )
 

@@ -16,12 +16,19 @@ class Worker(QObject):
         self.args = args
         self.kwargs = kwargs
 
+    @staticmethod
+    def _safe_emit(signal, *args):
+        try:
+            signal.emit(*args)
+        except RuntimeError as exc:
+            logger.debug(f"Skipping signal emit on deleted Qt object: {exc}")
+
     def run(self):
         func_name = self.target_func.__name__
         logger.debug(f"Worker starting execution of function: '{func_name}'")
         try:
             result = self.target_func(*self.args, **self.kwargs)
-            self.finished.emit(result)
+            self._safe_emit(self.finished, result)
             logger.debug(f"Worker finished function '{func_name}' successfully.")
         except Exception as e:
             logger.error(
@@ -30,9 +37,9 @@ class Worker(QObject):
             )
             import traceback
 
-            self.error.emit((type(e), e, traceback.format_exc()))
+            self._safe_emit(self.error, (type(e), e, traceback.format_exc()))
         finally:
-            self.completed.emit()
+            self._safe_emit(self.completed)
             logger.debug(f"Worker completed task for function '{func_name}'.")
 
 

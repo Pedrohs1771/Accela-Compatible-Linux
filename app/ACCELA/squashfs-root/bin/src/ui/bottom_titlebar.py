@@ -23,6 +23,7 @@ from .assets import (
     MINIMIZE,
     POWER_SVG,
     SEARCH_SVG,
+    UPDATE_SVG,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class ClickableLabel(QLabel):
     ):
         super().__init__(text, parent)
         self.callback = callback
-        self.setStyleSheet("cursor: pointer;")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if self.callback:
@@ -54,7 +55,7 @@ class BottomTitleBar(QFrame):
         super().__init__(parent)
         self.parent_window = parent
         self.drag_pos = None
-        self.setFixedHeight(32)
+        self.setFixedHeight(36)
         self.no_previous_state = True
 
         self.navi_label: Optional[QLabel] = None
@@ -66,6 +67,8 @@ class BottomTitleBar(QFrame):
         self.search_button: Optional[QPushButton] = None
         self.game_library_button: Optional[QPushButton] = None
         self.settings_button: Optional[QPushButton] = None
+        self.update_button: Optional[QPushButton] = None
+        self.update_badge: Optional[QLabel] = None
         self.minimize_button: Optional[QPushButton] = None
         self.maximize_button: Optional[QPushButton] = None
         self.close_button: Optional[QPushButton] = None
@@ -106,7 +109,7 @@ class BottomTitleBar(QFrame):
             self.parent_window,
             getattr(self.parent_window, "open_credits_dialog", None),
         )
-        version_label.setStyleSheet("color: #888888;")
+        version_label.setStyleSheet("color: #9D9D9D; font-size: 12px; padding-left: 4px;")
         version_label.setToolTip("Ver créditos")
         layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -170,6 +173,20 @@ class BottomTitleBar(QFrame):
         )
         layout.addWidget(self.settings_button)
 
+        self.update_button = self._create_round_svg_button(
+            UPDATE_SVG,
+            getattr(parent, "open_update_center", None),
+            "Update Center",
+        )
+        self.update_badge = QLabel(self.update_button)
+        self.update_badge.setFixedSize(8, 8)
+        self.update_badge.setStyleSheet(
+            "background-color: #ff3b30; border: 1px solid #ffd7d3; border-radius: 4px;"
+        )
+        self.update_badge.move(15, 1)
+        self.update_badge.hide()
+        layout.addWidget(self.update_button)
+
         self.minimize_button = self._create_svg_button(
             MINIMIZE, self._minimize_window, "Minimizar"
         )
@@ -210,7 +227,9 @@ class BottomTitleBar(QFrame):
         )
 
         if self.title_label:
-            self.title_label.setStyleSheet(f"color: {accent_color}; font-size: 14pt;")
+            self.title_label.setStyleSheet(
+                f"color: {accent_color}; font-size: 15pt; font-weight: 700;"
+            )
 
     def update_style(self) -> None:
         """Update the style when colors change."""
@@ -254,6 +273,9 @@ class BottomTitleBar(QFrame):
             if button:
                 button.setStyleSheet(button_style)
 
+        if self.update_button:
+            self._apply_round_button_style(self.update_button)
+
     def _update_button_colors(self) -> None:
         """Update all SVG button colors to match the current accent color."""
         settings = get_settings()
@@ -265,6 +287,7 @@ class BottomTitleBar(QFrame):
             (self.search_button, SEARCH_SVG),
             (self.game_library_button, BOOK_SVG),
             (self.settings_button, GEAR_SVG),
+            (self.update_button, UPDATE_SVG),
             (self.close_button, POWER_SVG),
         ]
 
@@ -347,7 +370,7 @@ class BottomTitleBar(QFrame):
             pixmap = self._build_svg_pixmap(svg_data, accent_color)
             button.setIcon(QIcon(pixmap))
             button.setIconSize(pixmap.size())
-            button.setFixedSize(20, 20)
+            button.setFixedSize(22, 22)
 
             if on_click:
                 button.clicked.connect(on_click)
@@ -356,10 +379,45 @@ class BottomTitleBar(QFrame):
         except Exception as e:
             logger.error(f"Failed to create SVG button: {e}", exc_info=True)
             fallback_button = QPushButton("X")
-            fallback_button.setFixedSize(20, 20)
+            fallback_button.setFixedSize(22, 22)
             if on_click:
                 fallback_button.clicked.connect(on_click)
             return fallback_button
+
+    def _create_round_svg_button(
+        self,
+        svg_data: str,
+        on_click: Optional[Callable[[], None]],
+        tooltip: str,
+    ) -> QPushButton:
+        button = self._create_svg_button(svg_data, on_click, tooltip)
+        self._apply_round_button_style(button)
+        return button
+
+    @staticmethod
+    def _apply_round_button_style(button: QPushButton) -> None:
+        settings = get_settings()
+        accent_color = settings.value("accent_color", "#C06C84")
+        bg_color = QColor(settings.value("background_color", "#000000"))
+        hover_color = bg_color.lighter(130).name() if bg_color != QColor("#000000") else "#202020"
+        button.setFixedSize(24, 24)
+        button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid {accent_color};
+                border-radius: 12px;
+                padding: 1px;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+            """
+        )
+
+    def set_update_badge_visible(self, visible: bool) -> None:
+        if self.update_badge is not None:
+            self.update_badge.setVisible(visible)
 
     @staticmethod
     def _create_colored_circle_button(

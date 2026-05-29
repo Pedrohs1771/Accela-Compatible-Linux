@@ -7,6 +7,9 @@ INSTALLED_APP_SOURCE="$ROOT_DIR"
 BIN_DIR="$HOME/.local/bin"
 APPS_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ACCELA"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/ACCELA"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ACCELA"
 
 APP_SOURCE=""
 DEST_DIR=""
@@ -17,6 +20,11 @@ DIAGNOSE=false
 JSON_OUTPUT=false
 SOURCE_REVISION=""
 SOURCE_VERSION=""
+DRY_RUN=false
+DOCTOR=false
+SELF_TEST=false
+PATHS_ONLY=false
+USER_ONLY=false
 
 OS_ID=""
 OS_LIKE=""
@@ -63,6 +71,21 @@ while [ "$#" -gt 0 ]; do
         --source-version)
             SOURCE_VERSION="${2:-}"
             shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            ;;
+        --doctor)
+            DOCTOR=true
+            ;;
+        --self-test)
+            SELF_TEST=true
+            ;;
+        --paths)
+            PATHS_ONLY=true
+            ;;
+        --user-only)
+            USER_ONLY=true
             ;;
     esac
     shift
@@ -113,6 +136,53 @@ join_by() {
             printf '%s%s' "$delimiter" "$item"
         fi
     done
+}
+
+print_paths() {
+    local app_dir="${PORTABLE_DIR:-$HOME/.local/share/ACCELA}"
+    local launcher_path="$BIN_DIR/accela"
+    local desktop_path="$APPS_DIR/accela.desktop"
+
+    if [ "$JSON_OUTPUT" = true ]; then
+        APP_DIR_NAME="$app_dir" \
+        BIN_DIR_NAME="$BIN_DIR" \
+        DESKTOP_PATH_NAME="$desktop_path" \
+        ICON_DIR_NAME="$ICON_DIR" \
+        CACHE_DIR_NAME="$CACHE_DIR" \
+        STATE_DIR_NAME="$STATE_DIR" \
+        CONFIG_DIR_NAME="$CONFIG_DIR" \
+        LAUNCHER_PATH_NAME="$launcher_path" \
+        python3 - <<'PY'
+import json
+import os
+
+print(
+    json.dumps(
+        {
+            "app_dir": os.environ["APP_DIR_NAME"],
+            "launcher": os.environ["LAUNCHER_PATH_NAME"],
+            "desktop_entry": os.environ["DESKTOP_PATH_NAME"],
+            "bin_dir": os.environ["BIN_DIR_NAME"],
+            "icon_dir": os.environ["ICON_DIR_NAME"],
+            "cache_dir": os.environ["CACHE_DIR_NAME"],
+            "state_dir": os.environ["STATE_DIR_NAME"],
+            "config_dir": os.environ["CONFIG_DIR_NAME"],
+        },
+        ensure_ascii=False,
+    )
+)
+PY
+        return
+    fi
+
+    printf 'App: %s\n' "$app_dir"
+    printf 'Launcher: %s\n' "$launcher_path"
+    printf 'Desktop: %s\n' "$desktop_path"
+    printf 'Binários: %s\n' "$BIN_DIR"
+    printf 'Ícones: %s\n' "$ICON_DIR"
+    printf 'Cache: %s\n' "$CACHE_DIR"
+    printf 'Estado/logs: %s\n' "$STATE_DIR"
+    printf 'Config: %s\n' "$CONFIG_DIR"
 }
 
 resolve_app_source() {
@@ -290,6 +360,10 @@ detect_recommended_mode() {
     RECOMMENDED_MODE="system"
 }
 
+ensure_runtime_dirs() {
+    mkdir -p "$CACHE_DIR" "$STATE_DIR" "$CONFIG_DIR"
+}
+
 collect_missing_deps() {
     missing_deps=()
 
@@ -375,6 +449,104 @@ PY
     printf 'Modo recomendado: %s\n' "$RECOMMENDED_MODE"
 }
 
+run_self_test() {
+    local app_dir="${DEST_DIR:-$HOME/.local/share/ACCELA}"
+    local base_dir="$app_dir/squashfs-root"
+    local failures=()
+
+    if [ ! -d "$base_dir" ]; then
+        failures+=("Instalação não encontrada em $base_dir")
+    else
+        bash -n "$app_dir/install.sh" >/dev/null 2>&1 || failures+=("install.sh inválido")
+        bash -n "$base_dir/AppRun" >/dev/null 2>&1 || failures+=("AppRun inválido")
+        bash -n "$base_dir/bin/run.sh" >/dev/null 2>&1 || failures+=("run.sh inválido")
+        python3 -m compileall "$base_dir/bin/src" >/dev/null 2>&1 || failures+=("Python source não compila")
+        if [ -x "$base_dir/bin/.venv/bin/python" ]; then
+            "$base_dir/bin/.venv/bin/python" - <<'PY' >/dev/null 2>&1 || failures+=("Dependências Python principais falharam")
+import importlib
+for module in ("PyQt6", "requests", "bs4", "cachetools"):
+    importlib.import_module(module)
+PY
+        else
+            failures+=(".venv ausente")
+        fi
+        if need_cmd desktop-file-validate && [ -f "$APPS_DIR/accela.desktop" ]; then
+            desktop-file-validate "$APPS_DIR/accela.desktop" >/dev/null 2>&1 || failures+=(".desktop inválido")
+        fi
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        printf 'SELF_TEST=OK\n'
+        return 0
+    fi
+
+    printf 'SELF_TEST=FAIL\n'
+    printf '%s\n' "${failures[@]}"
+    return 1
+}
+
+run_doctor() {
+    print_diagnostics
+    printf '\n'
+    print_paths
+    printf '\n'
+    run_self_test
+}
+
+show_dry_run_plan() {
+    printf 'Dry-run ACCELA\n'
+    printf 'Modo: %s\n' "$MODE"
+    printf 'Origem: %s\n' "$APP_SOURCE"
+    printf 'Destino: %s\n' "$DEST_DIR"
+    printf 'Criaria/atualizaria:\n'
+    printf ' - %s\n' "$DEST_DIR"
+    if [ "$MODE" != "portable" ]; then
+        printf ' - %s/accela\n' "$BIN_DIR"
+        printf ' - %s/accela.desktop\n' "$APPS_DIR"
+        printf ' - %s/accela.png\n' "$ICON_DIR"
+    else
+        printf ' - %s/accela-portable\n' "$DEST_DIR"
+    fi
+    printf ' - %s\n' "$CACHE_DIR"
+    printf ' - %s\n' "$STATE_DIR"
+    printf ' - .venv local do app\n'
+    printf ' - SLSsteam (se Steam detectada)\n'
+}
+
+download_to_file() {
+    local url="$1"
+    local target="$2"
+
+    mkdir -p "$(dirname "$target")"
+    if need_cmd curl; then
+        curl -fL --retry 3 -C - "$url" -o "$target"
+        return
+    fi
+    if need_cmd wget; then
+        wget -c -O "$target" "$url"
+        return
+    fi
+    die "Nem curl nem wget estão disponíveis."
+}
+
+ensure_local_bin_in_path() {
+    if printf '%s' ":$PATH:" | grep -q ":$BIN_DIR:"; then
+        return
+    fi
+
+    warn "$BIN_DIR não está no PATH atual. Vou adicionar para shells comuns."
+    local export_line='export PATH="$HOME/.local/bin:$PATH"'
+    local shell_file=""
+    for shell_file in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+        touch "$shell_file"
+        if ! grep -Fq "$export_line" "$shell_file"; then
+            printf '\n%s\n' "$export_line" >> "$shell_file"
+        fi
+    done
+
+    export PATH="$BIN_DIR:$PATH"
+}
+
 prompt_for_mode() {
     if [ -n "$MODE" ]; then
         return
@@ -427,10 +599,14 @@ resolve_dest_dir() {
 }
 
 write_runtime_wrapper() {
+    if [ "$DRY_RUN" = true ]; then
+        return
+    fi
+
     cat > "$DEST_DIR/ACCELA.AppImage" <<'SH'
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec "$HERE/squashfs-root/AppRun" "$@"
+exec -a accela "$HERE/squashfs-root/AppRun" "$@"
 SH
     chmod +x "$DEST_DIR/ACCELA.AppImage"
 }
@@ -476,14 +652,39 @@ PY
     fi
 }
 
+write_version_metadata() {
+    VERSION_TARGET="$DEST_DIR/VERSION.json" \
+    VERSION_LABEL="${SOURCE_VERSION:-unknown}" \
+    REVISION_LABEL="${SOURCE_REVISION:-}" \
+    python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+target = Path(os.environ["VERSION_TARGET"])
+payload = {
+    "version": os.environ.get("VERSION_LABEL", "unknown"),
+    "commit_sha": os.environ.get("REVISION_LABEL", ""),
+    "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+}
+target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+}
+
 sync_tree() {
+    if [ "$DRY_RUN" = true ]; then
+        show_dry_run_plan
+        return
+    fi
+
     mkdir -p "$DEST_DIR"
 
     if [ "$MODE" != "portable" ]; then
         create_backup
     fi
 
-    rsync -a --delete "$APP_SOURCE/squashfs-root/" "$DEST_DIR/squashfs-root/"
+    rsync -a --delete --exclude '.venv' "$APP_SOURCE/squashfs-root/" "$DEST_DIR/squashfs-root/"
     rsync -a --delete "$APP_SOURCE/tools/" "$DEST_DIR/tools/"
 
     if [ -d "$ROOT_DIR/release" ]; then
@@ -497,10 +698,20 @@ sync_tree() {
 
     if [ -z "$SOURCE_REVISION" ] && [ -d "$ROOT_DIR/.git" ]; then
         SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        if [ -n "$SOURCE_REVISION" ] && {
+            ! git -C "$ROOT_DIR" diff --quiet --ignore-submodules -- 2>/dev/null \
+            || ! git -C "$ROOT_DIR" diff --cached --quiet --ignore-submodules -- 2>/dev/null;
+        }; then
+            SOURCE_REVISION="local-${SOURCE_REVISION}-dirty"
+        fi
     fi
 
     if [ -z "$SOURCE_VERSION" ] && [ -n "$SOURCE_REVISION" ]; then
-        SOURCE_VERSION="main-$(printf '%s' "$SOURCE_REVISION" | cut -c1-8)"
+        if printf '%s' "$SOURCE_REVISION" | grep -q '^local-'; then
+            SOURCE_VERSION="local-$(printf '%s' "$SOURCE_REVISION" | sed -E 's/^local-([0-9a-f]+).*$/\1/' | cut -c1-8)-dirty"
+        else
+            SOURCE_VERSION="main-$(printf '%s' "$SOURCE_REVISION" | cut -c1-8)"
+        fi
     fi
 
     if [ -n "$SOURCE_REVISION" ]; then
@@ -511,6 +722,8 @@ sync_tree() {
         printf '%s\n' "$SOURCE_VERSION" > "$DEST_DIR/.version"
         printf '%s\n' "$SOURCE_VERSION" > "$DEST_DIR/squashfs-root/bin/src/res/version"
     fi
+
+    write_version_metadata
 
     mkdir -p \
         "$DEST_DIR/logs" \
@@ -525,19 +738,18 @@ install_dotnet_9_local() {
         return
     fi
 
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: instalaria .NET 9 em $HOME/.dotnet"
+        return
+    fi
+
     local tmp_dir install_script
     tmp_dir="$(mktemp -d)"
     install_script="$tmp_dir/dotnet-install.sh"
     mkdir -p "$HOME/.dotnet"
 
     log "Instalando .NET 9 em $HOME/.dotnet ..."
-    if need_cmd curl; then
-        curl -fsSL "https://dot.net/v1/dotnet-install.sh" -o "$install_script"
-    elif need_cmd wget; then
-        wget -qO "$install_script" "https://dot.net/v1/dotnet-install.sh"
-    else
-        die "Nem curl nem wget estão disponíveis para instalar o .NET 9."
-    fi
+    download_to_file "https://dot.net/v1/dotnet-install.sh" "$install_script"
 
     chmod +x "$install_script"
     DOTNET_ROOT="$HOME/.dotnet" bash "$install_script" --channel 9.0 --runtime dotnet
@@ -545,6 +757,16 @@ install_dotnet_9_local() {
 
 install_system_packages() {
     local packages=()
+
+    if [ "$USER_ONLY" = true ]; then
+        warn "Modo user-only ativo: pulando instalação de pacotes do sistema."
+        return
+    fi
+
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: pularia a instalação de pacotes do sistema."
+        return
+    fi
 
     if [ "$IS_IMMUTABLE" = true ] || [ "$OS_FAMILY" = "nix" ]; then
         warn "Seu sistema é imutável. Vou usar o modo portátil/local sempre que possível."
@@ -676,15 +898,42 @@ install_system_packages() {
 setup_python_env() {
     local venv_dir="$DEST_DIR/squashfs-root/bin/.venv"
     local req_file="$DEST_DIR/squashfs-root/bin/requirements.txt"
+    local hash_file="$DEST_DIR/.requirements.sha256"
+    local req_hash=""
 
     if ! need_cmd python3; then
         die "python3 não encontrado."
     fi
 
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: prepararia/reutilizaria o ambiente Python em $venv_dir"
+        return
+    fi
+
+    req_hash="$(sha256sum "$req_file" | awk '{print $1}')"
+    if [ -x "$venv_dir/bin/python" ] \
+        && [ -f "$hash_file" ] \
+        && [ "$(cat "$hash_file")" = "$req_hash" ]; then
+        if "$venv_dir/bin/python" - <<'PY' >/dev/null 2>&1
+import importlib
+for module in ("PyQt6", "requests", "bs4", "cachetools"):
+    importlib.import_module(module)
+PY
+        then
+            log "Ambiente Python já está íntegro; reutilizando .venv."
+            return
+        fi
+        warn "A .venv existe, mas falhou na validação. Vou recriá-la."
+    fi
+
+    rm -rf "$venv_dir"
+    mkdir -p "$CACHE_DIR/pip"
+
     log "Preparando ambiente Python..."
     python3 -m venv "$venv_dir"
-    "$venv_dir/bin/pip" install --upgrade pip setuptools wheel
-    "$venv_dir/bin/pip" install -r "$req_file"
+    PIP_CACHE_DIR="$CACHE_DIR/pip" "$venv_dir/bin/pip" install --upgrade pip setuptools wheel
+    PIP_CACHE_DIR="$CACHE_DIR/pip" "$venv_dir/bin/pip" install -r "$req_file"
+    printf '%s\n' "$req_hash" > "$hash_file"
 }
 
 install_slssteam() {
@@ -693,18 +942,33 @@ install_slssteam() {
         return
     fi
 
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: verificaria/instalaria o SLSsteam."
+        return
+    fi
+
     local tmp_dir archive release_json asset_url latest_version setup_script
+    local version_file="$HOME/.local/share/SLSsteam/VERSION"
 
     tmp_dir="$(mktemp -d)"
     archive="$tmp_dir/SLSsteam-Any.7z"
     release_json="$tmp_dir/release.json"
 
     log "Baixando SLSsteam oficial..."
-    curl -fsSL \
-        "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest" \
-        -H "Accept: application/vnd.github+json" \
-        -H "User-Agent: ACCELA" \
-        -o "$release_json"
+    if need_cmd curl; then
+        curl -fsSL \
+            "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest" \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: ACCELA" \
+            -o "$release_json"
+    elif need_cmd wget; then
+        wget -qO "$release_json" \
+            --header="Accept: application/vnd.github+json" \
+            --header="User-Agent: ACCELA" \
+            "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest"
+    else
+        die "Nem curl nem wget estão disponíveis para baixar o SLSsteam."
+    fi
 
     asset_url="$(python3 - "$release_json" <<'PY'
 import json
@@ -734,7 +998,12 @@ print(release.get("tag_name", "").strip())
 PY
 )"
 
-    curl -fsSL "$asset_url" -o "$archive"
+    if [ -n "$latest_version" ] && [ -f "$version_file" ] && [ "$(cat "$version_file")" = "$latest_version" ]; then
+        log "SLSsteam já está atualizado em $latest_version."
+        return
+    fi
+
+    download_to_file "$asset_url" "$archive"
     mkdir -p "$tmp_dir/extract"
     7z x "$archive" "-o$tmp_dir/extract" -y >/dev/null
 
@@ -758,18 +1027,23 @@ PY
 
     if [ -n "$latest_version" ]; then
         mkdir -p "$HOME/.local/share/SLSsteam"
-        printf '%s\n' "$latest_version" > "$HOME/.local/share/SLSsteam/VERSION"
+        printf '%s\n' "$latest_version" > "$version_file"
     fi
 }
 
 install_launchers() {
     if [ "$MODE" = "portable" ]; then
         cat > "$DEST_DIR/accela-portable" <<'SH'
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec "$HERE/squashfs-root/AppRun" "$@"
+exec -a accela "$HERE/squashfs-root/AppRun" "$@"
 SH
         chmod +x "$DEST_DIR/accela-portable"
+        return
+    fi
+
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: instalaria launchers globais em $BIN_DIR"
         return
     fi
 
@@ -777,8 +1051,23 @@ SH
     mkdir -p "$BIN_DIR"
 
     cat > "$BIN_DIR/accela" <<'SH'
-#!/usr/bin/env sh
-exec "$HOME/.local/share/ACCELA/squashfs-root/AppRun" "$@"
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="$HOME/.local/share/ACCELA"
+INSTALLER="$APP_DIR/install.sh"
+APP_RUN="$APP_DIR/squashfs-root/AppRun"
+
+case "${1:-}" in
+    --doctor|--self-test|--paths|--diagnose|--json|--dry-run)
+        exec "$INSTALLER" "$@"
+        ;;
+    --repair)
+        exec "$INSTALLER" --repair --no-prompt
+        ;;
+esac
+
+exec -a accela "$APP_RUN" "$@"
 SH
     chmod +x "$BIN_DIR/accela"
 
@@ -801,6 +1090,11 @@ for bits in itertools.product((0, 1), repeat=len(name)):
     if path.exists() or path.is_symlink():
         path.unlink()
     path.symlink_to(target.name)
+
+portable_name = bin_dir / "accela-linux"
+if portable_name.exists() or portable_name.is_symlink():
+    portable_name.unlink()
+portable_name.symlink_to(target.name)
 PY
 }
 
@@ -809,14 +1103,23 @@ install_desktop_entry() {
         return
     fi
 
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: instalaria o atalho .desktop e o ícone."
+        return
+    fi
+
     log "Instalando atalhos..."
     mkdir -p "$APPS_DIR" "$ICON_DIR"
+
+    if [ -L "$APPS_DIR/accela.desktop" ]; then
+        rm -f "$APPS_DIR/accela.desktop"
+    fi
 
     install -Dm644 \
         "$DEST_DIR/squashfs-root/bin/src/res/logo/icon.png" \
         "$ICON_DIR/accela.png"
 
-    cat > "$APPS_DIR/accela.desktop" <<EOF
+    cat > "$APPS_DIR/accela.desktop.tmp" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
@@ -825,10 +1128,13 @@ Comment=Launcher ACCELA universal para Linux
 Exec=$BIN_DIR/accela
 Icon=accela
 Terminal=false
-Categories=Game;Utility;
+Categories=Game;
 StartupNotify=true
+StartupWMClass=accela
+X-GNOME-SingleWindow=true
 MimeType=x-scheme-handler/accela;
 EOF
+    mv "$APPS_DIR/accela.desktop.tmp" "$APPS_DIR/accela.desktop"
 
     if need_cmd update-desktop-database; then
         update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
@@ -844,10 +1150,14 @@ run_installation() {
     install_launchers
     install_desktop_entry
     write_runtime_wrapper
+    if [ "$MODE" != "portable" ] && [ "$DRY_RUN" != true ]; then
+        ensure_local_bin_in_path
+    fi
 }
 
 main() {
     resolve_app_source
+    ensure_runtime_dirs
     detect_os
     detect_steam_mode
     detect_gpu
@@ -857,6 +1167,22 @@ main() {
     if [ "$DIAGNOSE" = true ]; then
         print_diagnostics
         exit 0
+    fi
+
+    if [ "$PATHS_ONLY" = true ]; then
+        print_paths
+        exit 0
+    fi
+
+    if [ "$DOCTOR" = true ] || [ "$SELF_TEST" = true ]; then
+        MODE="${MODE:-install}"
+        resolve_dest_dir
+        if [ "$DOCTOR" = true ]; then
+            run_doctor
+            exit $?
+        fi
+        run_self_test
+        exit $?
     fi
 
     prompt_for_mode
