@@ -61,7 +61,7 @@ generate_test_report() {
 run_preflight() {
     local tmp_venv
     tmp_venv="$(mktemp -d /tmp/accela-preflight-XXXXXX)"
-    trap 'rm -rf "$tmp_venv"' RETURN
+    trap 'rm -rf "${tmp_venv:-}"' RETURN
 
     generate_test_report
 
