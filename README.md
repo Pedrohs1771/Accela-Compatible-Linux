@@ -38,11 +38,27 @@ accela
 
 O instalador também cria aliases com várias capitalizações de `accela`.
 
+## Fluxo de desenvolvimento
+
+Dentro do repositório existem dois atalhos:
+
+```bash
+bash dev-install.sh
+```
+
+Reinstala a versão atual do repositório em `~/.local/share/ACCELA` para testar localmente.
+
+```bash
+bash publish-update.sh "mensagem do commit"
+```
+
+Faz `git add`, `git commit` e `git push` para o `main`.
+
 ## Atualizações
 
-O ACCELA verifica tags/releases deste repositório e pode:
+O ACCELA verifica o branch `main` deste repositório e pode:
 
-- avisar quando sair uma versão nova
+- avisar quando sair commit novo
 - instalar a atualização automaticamente
 - aplicar o update direto pela aba `Updates`
 

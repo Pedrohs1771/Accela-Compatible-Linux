@@ -11,13 +11,14 @@ import requests
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
+from utils.helpers import get_base_path
 from utils.version import app_version
 
 logger = logging.getLogger(__name__)
 
 
 class UpdateManager(QObject):
-    """Check GitHub for updates and install the latest tagged version."""
+    """Check GitHub for updates and install the latest commit from the tracked branch."""
 
     status_changed = pyqtSignal(str)
     release_detected = pyqtSignal(object)
@@ -46,6 +47,27 @@ class UpdateManager(QObject):
             "github_updates_repo", self.DEFAULT_REPO, type=str
         ).strip()
         return configured or self.DEFAULT_REPO
+
+    def get_branch_name(self) -> str:
+        configured = self.settings.value(
+            "github_updates_branch", "main", type=str
+        ).strip()
+        return configured or "main"
+
+    @staticmethod
+    def _revision_file() -> Path:
+        return get_base_path() / ".repo_revision"
+
+    def get_installed_revision(self) -> str:
+        revision_file = self._revision_file()
+        if not revision_file.exists():
+            return ""
+
+        try:
+            return revision_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            logger.warning("Failed to read installed repo revision", exc_info=True)
+            return ""
 
     def schedule_startup_check(self) -> None:
         enabled = self.settings.value("github_updates_enabled", True, type=bool)
@@ -81,7 +103,9 @@ class UpdateManager(QObject):
             return False
 
         self._install_in_progress = True
-        self._set_status(f"Instalando {release.get('tag_name', 'nova versão')}...")
+        self._set_status(
+            f"Instalando {release.get('display_name', release.get('tag_name', 'novo update'))}..."
+        )
 
         script_path = self._write_update_script(release)
         try:
@@ -104,20 +128,23 @@ class UpdateManager(QObject):
         try:
             release = self._fetch_latest_release()
             self.latest_release = release
-            current_version = self._normalize_version(self.current_version)
-            latest_version = self._normalize_version(release.get("tag_name", ""))
-            update_available = bool(latest_version) and current_version != latest_version
+            installed_revision = self.get_installed_revision()
+            latest_revision = str(release.get("commit_sha", "")).strip()
+            update_available = bool(latest_revision) and installed_revision != latest_revision
 
             if update_available:
                 self._set_status(
-                    f"Atualização disponível: {release.get('tag_name')}."
+                    f"Atualização disponível: {release.get('display_name', 'novo commit')}."
                 )
                 payload = dict(release)
                 payload["interactive"] = interactive
                 self.release_detected.emit(payload)
             else:
+                current_label = release.get("display_name", self.current_version)
+                if installed_revision:
+                    current_label = installed_revision[:8]
                 self._set_status(
-                    f"Você já está na versão mais recente ({self.current_version})."
+                    f"Você já está na versão mais recente ({current_label})."
                 )
                 if interactive:
                     QTimer.singleShot(
@@ -125,7 +152,7 @@ class UpdateManager(QObject):
                         lambda: QMessageBox.information(
                             self.main_window,
                             "Atualizações",
-                            f"Você já está na versão mais recente ({self.current_version}).",
+                            f"Você já está na versão mais recente ({current_label}).",
                         ),
                     )
         except Exception as exc:
@@ -157,11 +184,13 @@ class UpdateManager(QObject):
         if not self.main_window.isVisible():
             return
 
-        latest = release.get("tag_name", "nova versão")
+        latest = release.get("display_name", "novo update")
         message = QMessageBox(self.main_window)
         message.setWindowTitle("Atualização disponível")
-        message.setText(f"A versão {latest} está disponível no GitHub.")
-        message.setInformativeText("Deseja baixar e instalar agora?")
+        message.setText(f"O update {latest} está disponível no GitHub.")
+        message.setInformativeText(
+            f"Branch monitorada: {release.get('branch_name', self.get_branch_name())}\nDeseja baixar e instalar agora?"
+        )
         message.setStandardButtons(
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
@@ -171,39 +200,33 @@ class UpdateManager(QObject):
 
     def _fetch_latest_release(self) -> Dict[str, str]:
         repo = self.get_repo_slug()
+        branch_name = self.get_branch_name()
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "ACCELA",
         }
-
-        release_url = f"https://api.github.com/repos/{repo}/releases/latest"
-        response = requests.get(release_url, headers=headers, timeout=30)
-        if response.status_code == 404:
-            tags_url = f"https://api.github.com/repos/{repo}/tags"
-            tags_response = requests.get(tags_url, headers=headers, timeout=30)
-            tags_response.raise_for_status()
-            tags = tags_response.json()
-            if not tags:
-                raise RuntimeError("Nenhuma tag encontrada no repositório.")
-            tag_name = tags[0].get("name", "").strip()
-            if not tag_name:
-                raise RuntimeError("A primeira tag do repositório está inválida.")
-            return {
-                "tag_name": tag_name,
-                "zip_url": f"https://github.com/{repo}/archive/refs/tags/{tag_name}.zip",
-                "html_url": f"https://github.com/{repo}/tree/{tag_name}",
-            }
-
+        commit_url = f"https://api.github.com/repos/{repo}/commits/{branch_name}"
+        response = requests.get(commit_url, headers=headers, timeout=30)
         response.raise_for_status()
-        release = response.json()
-        tag_name = str(release.get("tag_name", "")).strip()
-        if not tag_name:
-            raise RuntimeError("Release do GitHub sem tag_name.")
+        commit = response.json()
+
+        full_sha = str(commit.get("sha", "")).strip()
+        if not full_sha:
+            raise RuntimeError("Commit do GitHub sem sha.")
+
+        short_sha = full_sha[:8]
+        commit_message = (
+            ((commit.get("commit") or {}).get("message") or "").splitlines()[0].strip()
+        )
 
         return {
-            "tag_name": tag_name,
-            "zip_url": release.get("zipball_url", ""),
-            "html_url": release.get("html_url", ""),
+            "tag_name": short_sha,
+            "display_name": f"{branch_name}-{short_sha}",
+            "branch_name": branch_name,
+            "commit_sha": full_sha,
+            "commit_message": commit_message,
+            "zip_url": f"https://github.com/{repo}/archive/{full_sha}.zip",
+            "html_url": commit.get("html_url", ""),
         }
 
     @staticmethod
@@ -219,6 +242,10 @@ class UpdateManager(QObject):
         script_path = temp_dir / "apply-update.sh"
         zip_url = shlex.quote(str(release.get("zip_url", "")))
         current_pid = os.getpid()
+        source_revision = shlex.quote(str(release.get("commit_sha", "")).strip())
+        source_version = shlex.quote(
+            str(release.get("display_name", release.get("tag_name", ""))).strip()
+        )
 
         script = f"""#!/usr/bin/env bash
 set -euo pipefail
@@ -263,7 +290,7 @@ while kill -0 {current_pid} >/dev/null 2>&1; do
 done
 
 chmod +x "$SRC_DIR/install.sh"
-bash "$SRC_DIR/install.sh" --no-prompt
+bash "$SRC_DIR/install.sh" --no-prompt --source-revision {source_revision} --source-version {source_version}
 "$HOME/.local/bin/accela" >/dev/null 2>&1 &
 """
         script_path.write_text(script, encoding="utf-8")

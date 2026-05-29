@@ -8,13 +8,25 @@ BIN_DIR="$HOME/.local/bin"
 APPS_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 NO_PROMPT=false
+SOURCE_REVISION=""
+SOURCE_VERSION=""
 
-for arg in "$@"; do
+while [ "$#" -gt 0 ]; do
+    arg="$1"
     case "$arg" in
         --no-prompt)
             NO_PROMPT=true
             ;;
+        --source-revision)
+            SOURCE_REVISION="${2:-}"
+            shift
+            ;;
+        --source-version)
+            SOURCE_VERSION="${2:-}"
+            shift
+            ;;
     esac
+    shift
 done
 
 log() {
@@ -70,6 +82,15 @@ install_arch_packages() {
     fi
 }
 
+write_runtime_wrapper() {
+    cat > "$DEST_DIR/ACCELA.AppImage" <<'SH'
+#!/usr/bin/env sh
+HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$HERE/squashfs-root/AppRun" "$@"
+SH
+    chmod +x "$DEST_DIR/ACCELA.AppImage"
+}
+
 sync_tree() {
     mkdir -p "$DEST_DIR"
 
@@ -78,12 +99,24 @@ sync_tree() {
 
     install -Dm644 "$APP_SOURCE/.version" "$DEST_DIR/.version"
 
-    cat > "$DEST_DIR/ACCELA.AppImage" <<'SH'
-#!/usr/bin/env sh
-HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec "$HERE/squashfs-root/AppRun" "$@"
-SH
-    chmod +x "$DEST_DIR/ACCELA.AppImage"
+    write_runtime_wrapper()
+
+    if [ -z "$SOURCE_REVISION" ] && [ -d "$ROOT_DIR/.git" ]; then
+        SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+    fi
+
+    if [ -z "$SOURCE_VERSION" ] && [ -n "$SOURCE_REVISION" ]; then
+        SOURCE_VERSION="main-$(printf '%s' "$SOURCE_REVISION" | cut -c1-8)"
+    fi
+
+    if [ -n "$SOURCE_REVISION" ]; then
+        printf '%s\n' "$SOURCE_REVISION" > "$DEST_DIR/.repo_revision"
+    fi
+
+    if [ -n "$SOURCE_VERSION" ]; then
+        printf '%s\n' "$SOURCE_VERSION" > "$DEST_DIR/.version"
+        printf '%s\n' "$SOURCE_VERSION" > "$DEST_DIR/squashfs-root/bin/src/res/version"
+    fi
 
     mkdir -p \
         "$DEST_DIR/logs" \
@@ -181,7 +214,7 @@ install_launchers() {
 
     cat > "$BIN_DIR/accela" <<'SH'
 #!/usr/bin/env sh
-exec "$HOME/.local/share/ACCELA/ACCELA.AppImage" "$@"
+exec "$HOME/.local/share/ACCELA/squashfs-root/AppRun" "$@"
 SH
     chmod +x "$BIN_DIR/accela"
 
@@ -247,6 +280,7 @@ main() {
     install_slssteam || log "Aviso: falha ao instalar SLSsteam automaticamente."
     install_launchers
     install_desktop_entry
+    write_runtime_wrapper
 
     log "Instalação concluída."
     log "Abra com: accela"
