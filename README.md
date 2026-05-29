@@ -1,6 +1,6 @@
 # ACCELA Compatible Linux
 
-Versão modificada em pt-BR do projeto original `ACCELA / enter-the-wired`, adaptada para Linux e mantida neste repositório.
+Versão modificada em pt-BR do ACCELA, adaptada para Linux e mantida neste repositório.
 
 Build do ACCELA preparada para Linux com:
 
@@ -12,13 +12,10 @@ Build do ACCELA preparada para Linux com:
 - instalador automático de dependências e do `SLSsteam`
 - atualizações pelo GitHub dentro do próprio app
 
-## Créditos e atribuição
+## Agradecimento
 
-- Projeto original: `ACCELA / enter-the-wired`
-- Repositório upstream: `https://github.com/ciscosweater/enter-the-wired`
-- Autor upstream: `ciscosweater`
-- Esta build é uma versão modificada com foco em pt-BR, integração Linux e empacotamento próprio
-- Obrigado ao projeto original por disponibilizar o código em open source
+Agradecimento discreto ao portal oficial do ACCELA Dist Archive pelo projeto open source:
+`https://portal3d.github.io/accela-dist-archive/`
 
 ## Licença
 
