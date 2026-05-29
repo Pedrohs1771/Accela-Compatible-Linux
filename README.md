@@ -77,4 +77,5 @@ As chaves não vão no repositório nem no pacote. Cada pessoa precisa adicionar
 - O app já inclui `rclone`, `DepotDownloader`, `Steamless`, `Goldberg` e o material do `SLScheevo`.
 - O instalador é focado em Arch Linux. Em outras distros ele ainda copia o app, mas a instalação automática de pacotes pode não acontecer.
 
-Demonstration: https://github.com/Pedrohs1771/Accela-Compatible-Linux/issues/1#issue-4550097849
+Demonstration: <video src="https://github.com/Pedrohs1771/Accela-Compatible-Linux/issues/1#issue-4550097849" width="100%" controls></video>
+
