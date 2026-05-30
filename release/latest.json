@@ -1,12 +1,12 @@
 {
-  "version": "main-44f585cf",
-  "display_name": "main-44f585cf",
+  "version": "main-5a0e2cfe",
+  "display_name": "main-5a0e2cfe",
   "channel": "rolling",
-  "commit_sha": "44f585cf0ce805c8a72b98ee1ad65a1c01e1b9e7",
+  "commit_sha": "5a0e2cfe9c4e38c1ec6063ec1919906a1eb45978",
   "package_url": "https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/download/rolling/ACCELA-Universal-latest.zip",
   "sha256_url": "https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/download/rolling/ACCELA-Universal-latest.zip.sha256",
   "signature_url": "https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/download/rolling/ACCELA-Universal-latest.zip.sig",
   "html_url": "https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/tag/rolling",
-  "published_at": "2026-05-30T21:24:10.168458Z",
-  "notes": "Canal rolling do ACCELA."
+  "published_at": "2026-05-30T21:35:03.473749Z",
+  "notes": "Canal rolling do ACCELA focado em Linux universal."
 }
