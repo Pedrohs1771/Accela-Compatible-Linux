@@ -32,5 +32,19 @@ Listing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/utils'...
   ok
 - PASS `desktop-file`
   ok
+- PASS `fresh-venv`
+  deps ok
+- PASS `benchmark`
+  {
+  "compileall_seconds": 0.0499,
+  "linux_backend_scan_seconds": 0.0003,
+  "linux_backend_libraries": [
+    "/tmp/tmp3sovm4ao/Steam",
+    "/tmp/tmp3sovm4ao/Extra"
+  ],
+  "cwd": "/home/pedrohs/ACCELA"
+}
+- PASS `docker-smoke`
+  ubuntu:24.04: OK; fedora:41: OK; archlinux:latest: OK
 
 Resultado final: APROVADO

@@ -1,16 +1,29 @@
-# ACCELA Compatible Linux
+# ACCELA Compatible
 
-Versão modificada em pt-BR do ACCELA, adaptada para Linux e mantida neste repositório.
+Versão modificada em pt-BR do ACCELA, mantida neste repositório com distribuição para Linux e Windows.
 
-Build do ACCELA preparada para Linux com:
+Build do ACCELA preparada com foco em Linux e pacote Windows dedicado:
 
 - interface em pt-BR
 - modo stealth com bandeja do sistema e autostart
 - fechamento automático quando a Steam fecha
 - OpenCloudSave com `rclone`
 - Rich Presence opcional do ACCELA
-- instalador automático de dependências e do `SLSsteam`
+- instalador automático de dependências e do `SLSsteam` no Linux
 - atualizações pelo GitHub dentro do próprio app
+
+## Downloads
+
+Escolha a plataforma na release mais recente:
+
+- Linux: `ACCELA-Universal-latest.zip`
+- Windows x64: `ACCELA-Windows-x64.zip`
+
+Release mais recente:
+`https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/latest`
+
+Canal rolling:
+`https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/tag/rolling`
 
 ## Agradecimento
 
@@ -22,7 +35,7 @@ Agradecimento discreto ao portal oficial do ACCELA Dist Archive pelo projeto ope
 Este repositório preserva a base open source do projeto original sob licença `MIT`.
 O aviso de licença e copyright do upstream foi mantido no arquivo `LICENSE`.
 
-## Instalação
+## Instalação Linux
 
 ```bash
 git clone https://github.com/Pedrohs1771/Accela-Compatible-Linux.git
@@ -30,7 +43,7 @@ cd Accela-Compatible-Linux
 bash install.sh
 ```
 
-O instalador:
+O instalador Linux:
 
 - copia o ACCELA para `~/.local/share/ACCELA`
 - cria os launchers em `~/.local/bin`
@@ -38,7 +51,18 @@ O instalador:
 - monta a `.venv` local do app
 - instala as dependências Python do bundle
 - baixa e instala a versão oficial mais recente do `SLSsteam`
-- tenta instalar os pacotes de sistema necessários no Arch
+- detecta distro/família e tenta preparar o ambiente automaticamente
+
+## Instalação Windows
+
+1. Baixe `ACCELA-Windows-x64.zip` na release.
+2. Extraia o pacote.
+3. Se o Windows pedir runtime, execute `vc_redist.x64.exe`.
+4. Abra `Launch-ACCELA.cmd` na primeira vez.
+5. Depois disso, `ACCELA.exe` também pode ser aberto direto.
+
+Documentação da variante Windows:
+[windows/README.md](/home/pedrohs/ACCELA/windows/README.md:1)
 
 ## Uso
 
@@ -74,6 +98,11 @@ O ACCELA verifica o branch `main` deste repositório e pode:
 - instalar a atualização automaticamente
 - aplicar o update direto pela aba `Updates`
 
+No repositório, as releases agora podem carregar os dois artefatos:
+
+- Linux (`ACCELA-Universal-latest.zip`)
+- Windows x64 (`ACCELA-Windows-x64.zip`)
+
 ## Chaves de API
 
 As chaves não vão no repositório nem no pacote. Cada pessoa precisa adicionar as próprias em:
@@ -87,7 +116,8 @@ As chaves não vão no repositório nem no pacote. Cada pessoa precisa adicionar
 
 - O Rich Presence do Discord precisa de um `Client ID` e assets de imagem válidos na aplicação do Discord.
 - O app já inclui `rclone`, `DepotDownloader`, `Steamless`, `Goldberg` e o material do `SLScheevo`.
-- O instalador é focado em Arch Linux. Em outras distros ele ainda copia o app, mas a instalação automática de pacotes pode não acontecer.
+- O Linux continua sendo a linha com updater integrado mais madura.
+- O pacote Windows recebe preset automático de configuração e fica disponível na mesma release do projeto.
 
 Demonstration: 
 
