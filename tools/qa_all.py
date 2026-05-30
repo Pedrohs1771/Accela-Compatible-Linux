@@ -29,15 +29,25 @@ class StepResult:
     details: str
 
 
-def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd or ROOT),
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+def run(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: int | None = None,
+) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=str(cwd or ROOT),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Timeout executando {' '.join(cmd)}") from exc
 
 
 def qa_python() -> str:
@@ -168,7 +178,8 @@ def check_docker_smoke() -> str:
                 "bash",
                 "-lc",
                 command,
-            ]
+            ],
+            timeout=600,
         )
         ensure_ok(result, f"docker smoke {image}")
         outputs.append(f"{image}: OK")

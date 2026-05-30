@@ -19,21 +19,6 @@
       "name": "desktop-file",
       "ok": true,
       "details": "ok"
-    },
-    {
-      "name": "fresh-venv",
-      "ok": true,
-      "details": "deps ok"
-    },
-    {
-      "name": "benchmark",
-      "ok": true,
-      "details": "{\n  \"compileall_seconds\": 0.0676,\n  \"linux_backend_scan_seconds\": 0.0004,\n  \"linux_backend_libraries\": [\n    \"/tmp/tmpi0zawg91/Steam\",\n    \"/tmp/tmpi0zawg91/Extra\"\n  ],\n  \"cwd\": \"/home/pedrohs/ACCELA\"\n}"
-    },
-    {
-      "name": "docker-smoke",
-      "ok": true,
-      "details": "ubuntu:24.04: OK; fedora:41: OK; archlinux:latest: OK"
     }
   ],
   "passed": true

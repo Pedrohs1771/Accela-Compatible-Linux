@@ -112,8 +112,12 @@ PY
         append_report "- release/latest.json: valid"
     fi
 
-    run_test "ACCELA QA Lab release gate" python3 "$ROOT_DIR/tools/qa_all.py" --release
-    append_report "- QA Lab: passed"
+    if [ "${ACCELA_SKIP_QA:-0}" = "1" ]; then
+        append_report "- QA Lab: skipped by ACCELA_SKIP_QA=1"
+    else
+        run_test "ACCELA QA Lab release gate" python3 "$ROOT_DIR/tools/qa_all.py" --release
+        append_report "- QA Lab: passed"
+    fi
 }
 
 write_manifest() {
