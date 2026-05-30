@@ -226,9 +226,12 @@ class SettingsDialog(QDialog):
         self.opencloudsave_remote_input = None
         self.opencloudsave_rclone_input = None
         self.discord_presence_checkbox = None
+        self.discord_presence_status_label = None
         self.discord_client_id_input = None
         self.discord_large_image_input = None
         self.discord_small_image_input = None
+        self.discord_advanced_toggle = None
+        self.discord_advanced_container = None
         self.github_updates_checkbox = None
         self.github_auto_update_checkbox = None
         self.github_signed_updates_checkbox = None
@@ -956,23 +959,42 @@ class SettingsDialog(QDialog):
         )
         rpc_layout.addWidget(self.discord_presence_checkbox)
 
+        self.discord_presence_status_label = QLabel("Status: aguardando Discord")
+        self.discord_presence_status_label.setStyleSheet(
+            "color: #A6A6A6; font-size: 13px;"
+        )
+        rpc_layout.addWidget(self.discord_presence_status_label)
+
+        SettingsDialog._add_tool_explanation(
+            rpc_layout,
+            "O Rich Presence já vem ligado por padrão. Se o Discord estiver aberto e esta build tiver um Client ID válido, o ACCELA aparece sozinho.",
+        )
+
+        self.discord_advanced_toggle = QCheckBox("Mostrar opções avançadas")
+        rpc_layout.addWidget(self.discord_advanced_toggle)
+
+        self.discord_advanced_container = QWidget()
+        advanced_layout = QVBoxLayout(self.discord_advanced_container)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(8)
+
         self.discord_client_id_input = QLineEdit()
         self.discord_client_id_input.setPlaceholderText(
-            "Discord Application Client ID ou use ACCELA_DISCORD_CLIENT_ID"
+            "Opcional: sobrescreve o Client ID padrão desta build"
         )
         self.discord_client_id_input.setText(
             self.settings.value("discord_presence_client_id", "", type=str)
         )
-        rpc_layout.addWidget(QLabel("Client ID do Discord"))
-        rpc_layout.addWidget(self.discord_client_id_input)
+        advanced_layout.addWidget(QLabel("Client ID do Discord"))
+        advanced_layout.addWidget(self.discord_client_id_input)
 
         self.discord_large_image_input = QLineEdit()
         self.discord_large_image_input.setPlaceholderText("Asset key da imagem principal")
         self.discord_large_image_input.setText(
             self.settings.value("discord_presence_large_image", "accela_large", type=str)
         )
-        rpc_layout.addWidget(QLabel("Imagem principal"))
-        rpc_layout.addWidget(self.discord_large_image_input)
+        advanced_layout.addWidget(QLabel("Imagem principal"))
+        advanced_layout.addWidget(self.discord_large_image_input)
 
         self.discord_small_image_input = QLineEdit()
         self.discord_small_image_input.setPlaceholderText(
@@ -981,19 +1003,49 @@ class SettingsDialog(QDialog):
         self.discord_small_image_input.setText(
             self.settings.value("discord_presence_small_image", "", type=str)
         )
-        rpc_layout.addWidget(QLabel("Imagem secundária"))
-        rpc_layout.addWidget(self.discord_small_image_input)
+        advanced_layout.addWidget(QLabel("Imagem secundária"))
+        advanced_layout.addWidget(self.discord_small_image_input)
 
         SettingsDialog._add_tool_explanation(
-            rpc_layout,
-            "O Discord não aceita GIF bruto no Rich Presence. O ACCELA já alterna assets por estado; basta informar um Client ID válido e, se quiser, sobrescrever a imagem principal.",
+            advanced_layout,
+            "O Discord não aceita GIF bruto no Rich Presence. O ACCELA usa imagens estáticas por estado e você pode sobrescrever os assets aqui se mantiver uma aplicação própria.",
         )
+
+        self.discord_advanced_container.setVisible(
+            bool(self.discord_client_id_input.text().strip())
+            or self.settings.value(
+                "discord_presence_large_image", "accela_large", type=str
+            ).strip()
+            != "accela_large"
+            or bool(
+                self.settings.value("discord_presence_small_image", "", type=str).strip()
+            )
+        )
+        self.discord_advanced_toggle.setChecked(
+            self.discord_advanced_container.isVisible()
+        )
+        self.discord_advanced_toggle.toggled.connect(
+            self.discord_advanced_container.setVisible
+        )
+        rpc_layout.addWidget(self.discord_advanced_container)
 
         rpc_group.setLayout(rpc_layout)
         layout.addWidget(rpc_group)
 
         layout.addStretch()
         self.tab_widget.addTab(tab, "Discord")
+        self._refresh_discord_status()
+
+    def _refresh_discord_status(self) -> None:
+        if self.discord_presence_status_label is None:
+            return
+        manager = getattr(self.main_window, "discord_presence_manager", None)
+        if manager is None:
+            self.discord_presence_status_label.setText("Status: aguardando inicialização")
+            return
+        self.discord_presence_status_label.setText(
+            f"Status: {manager.get_status_text()}"
+        )
 
     def _create_updates_tab(self) -> None:
         """Create the GitHub updates tab."""
@@ -1430,6 +1482,7 @@ class SettingsDialog(QDialog):
             self.main_window.cloud_save_manager.reload_settings()
         if self.main_window and hasattr(self.main_window, "discord_presence_manager"):
             self.main_window.discord_presence_manager.reload_settings()
+            self._refresh_discord_status()
         if self.main_window and hasattr(self.main_window, "update_manager"):
             self.main_window.update_manager.reload_settings()
         logger.info("All settings saved.")

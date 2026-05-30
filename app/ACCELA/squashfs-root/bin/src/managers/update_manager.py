@@ -30,9 +30,9 @@ class UpdateManager(QObject):
     DEFAULT_REPO = "Pedrohs1771/Accela-Compatible-Linux"
     DEFAULT_BRANCH = "main"
     MANIFEST_PATH = "release/latest.json"
-    CHECK_CACHE_TTL_SECONDS = 45
-    HEARTBEAT_CHECK_SECONDS = 120
-    STARTUP_CHECK_DELAY_MS = 750
+    CHECK_CACHE_TTL_SECONDS = 10
+    HEARTBEAT_CHECK_SECONDS = 30
+    STARTUP_CHECK_DELAY_MS = 300
     PENDING_AUTO_UPDATE_RETRY_SECONDS = 15
 
     def __init__(self, main_window):

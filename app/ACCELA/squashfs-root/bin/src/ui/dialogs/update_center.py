@@ -4,6 +4,7 @@ import subprocess
 from typing import Optional
 
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QGroupBox,
     QHBoxLayout,
@@ -39,7 +40,10 @@ class UpdateCenterDialog(QDialog):
         self.github_auto_update_checkbox = None
         self.github_signed_updates_checkbox = None
         self.github_repo_input = None
+        self.advanced_updates_toggle = None
+        self.advanced_updates_container = None
         self.update_current_version_label = None
+        self.update_state_heading = None
         self.update_environment_label = None
         self.update_status_label = None
         self.update_security_label = None
@@ -119,22 +123,16 @@ class UpdateCenterDialog(QDialog):
         )
         updates_layout.addWidget(self.update_current_version_label)
 
+        self.update_state_heading = QLabel("Status: aguardando verificação")
+        self.update_state_heading.setStyleSheet(
+            "font-size: 17px; font-weight: 700; color: #D6D6D6;"
+        )
+        updates_layout.addWidget(self.update_state_heading)
+
         self.update_environment_label = QLabel("Sistema: analisando ambiente local...")
         self.update_environment_label.setWordWrap(True)
         self.update_environment_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         updates_layout.addWidget(self.update_environment_label)
-
-        updates_layout.addWidget(QLabel("Repositório"))
-        self.github_repo_input = QLineEdit()
-        self.github_repo_input.setText(
-            self.settings.value(
-                "github_updates_repo",
-                "Pedrohs1771/Accela-Compatible-Linux",
-                type=str,
-            )
-        )
-        self.github_repo_input.setPlaceholderText("usuario/repositorio")
-        updates_layout.addWidget(self.github_repo_input)
 
         self.github_updates_checkbox = create_checkbox_setting(
             "Verificar atualizações ao abrir",
@@ -163,6 +161,28 @@ class UpdateCenterDialog(QDialog):
         )
         updates_layout.addWidget(self.github_signed_updates_checkbox)
 
+        self.advanced_updates_toggle = QCheckBox("Mostrar opções avançadas")
+        self.advanced_updates_toggle.toggled.connect(self._toggle_advanced_updates)
+        updates_layout.addWidget(self.advanced_updates_toggle)
+
+        self.advanced_updates_container = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_updates_container)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(8)
+        advanced_layout.addWidget(QLabel("Repositório"))
+        self.github_repo_input = QLineEdit()
+        self.github_repo_input.setText(
+            self.settings.value(
+                "github_updates_repo",
+                "Pedrohs1771/Accela-Compatible-Linux",
+                type=str,
+            )
+        )
+        self.github_repo_input.setPlaceholderText("usuario/repositorio")
+        advanced_layout.addWidget(self.github_repo_input)
+        self.advanced_updates_container.setVisible(False)
+        updates_layout.addWidget(self.advanced_updates_container)
+
         self.update_status_label = QLabel("Aguardando verificação.")
         self.update_status_label.setWordWrap(True)
         self.update_status_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
@@ -190,6 +210,10 @@ class UpdateCenterDialog(QDialog):
         self.update_now_button.setEnabled(False)
         buttons_layout.addWidget(self.update_now_button)
 
+        apply_later_button = QPushButton("Aplicar ao fechar")
+        apply_later_button.clicked.connect(self._enable_auto_update)
+        buttons_layout.addWidget(apply_later_button)
+
         self.update_rollback_button = QPushButton("Voltar backup")
         self.update_rollback_button.clicked.connect(self._rollback_latest_backup)
         self.update_rollback_button.setEnabled(False)
@@ -203,6 +227,10 @@ class UpdateCenterDialog(QDialog):
         layout.addWidget(buttons)
 
         self._wire_update_manager()
+
+    def _toggle_advanced_updates(self, checked: bool) -> None:
+        if self.advanced_updates_container is not None:
+            self.advanced_updates_container.setVisible(checked)
 
     def _wire_update_manager(self) -> None:
         manager = getattr(self.main_window, "update_manager", None)
@@ -222,6 +250,17 @@ class UpdateCenterDialog(QDialog):
 
         if self.update_status_label is not None and message:
             self.update_status_label.setText(message)
+
+        if self.update_state_heading is not None:
+            state_title = "Status: aguardando verificação"
+            if manager is not None:
+                if getattr(manager, "_install_in_progress", False):
+                    state_title = "Status: preparando atualização"
+                elif manager.is_update_available():
+                    state_title = "Status: atualização disponível"
+                else:
+                    state_title = "Status: ACCELA atualizado"
+            self.update_state_heading.setText(state_title)
 
         if self.update_security_label is not None:
             security = (
@@ -333,6 +372,15 @@ class UpdateCenterDialog(QDialog):
             )
             return
         manager.install_update()
+
+    def _enable_auto_update(self) -> None:
+        self.github_auto_update_checkbox.setChecked(True)
+        self._save_update_settings()
+        QMessageBox.information(
+            self,
+            "Updates",
+            "O ACCELA vai preparar a próxima atualização automaticamente quando a fila estiver ociosa.",
+        )
 
     def _rollback_latest_backup(self) -> None:
         manager = getattr(self.main_window, "update_manager", None)

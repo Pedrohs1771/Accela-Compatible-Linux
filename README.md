@@ -8,7 +8,7 @@ Build do ACCELA preparada para Linux com foco em instalação simples, update co
 - modo stealth com bandeja do sistema e autostart
 - fechamento automático quando a Steam fecha
 - OpenCloudSave com `rclone`
-- Rich Presence opcional do ACCELA
+- Rich Presence do ACCELA ligado por padrão
 - instalador automático de dependências e do `SLSsteam` no Linux
 - atualizações pelo GitHub dentro do próprio app
 
@@ -109,7 +109,7 @@ As chaves não vão no repositório nem no pacote. Cada pessoa precisa adicionar
 
 ## Observações
 
-- O Rich Presence do Discord precisa de um `Client ID` e assets de imagem válidos na aplicação do Discord.
+- O Rich Presence vem ativado por padrão e usa as imagens padrão do ACCELA quando esta build tiver um Client ID válido; quem mantiver uma aplicação própria pode sobrescrever o Client ID e os assets nas opções avançadas.
 - O app já inclui `rclone`, `DepotDownloader`, `Steamless`, `Goldberg` e o material do `SLScheevo`.
 - O projeto agora volta a focar só em Linux para manter a distribuição auditável e consistente.
 - O updater integrado, install universal e repair são mantidos na linha Linux.

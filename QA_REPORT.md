@@ -36,11 +36,11 @@ Listing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/utils'...
   deps ok
 - PASS `benchmark`
   {
-  "compileall_seconds": 0.0499,
+  "compileall_seconds": 0.0515,
   "linux_backend_scan_seconds": 0.0003,
   "linux_backend_libraries": [
-    "/tmp/tmp3sovm4ao/Steam",
-    "/tmp/tmp3sovm4ao/Extra"
+    "/tmp/tmp2knt9u34/Steam",
+    "/tmp/tmp2knt9u34/Extra"
   ],
   "cwd": "/home/pedrohs/ACCELA"
 }

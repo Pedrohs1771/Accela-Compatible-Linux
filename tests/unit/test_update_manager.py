@@ -101,6 +101,18 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertFalse(state["available"])
         self.assertIn("Build local", state["message"])
 
+    def test_release_detection_notifies_only_once_per_revision(self):
+        manager = UpdateManager(FakeWindow())
+        manager.main_window.visible = False
+        notices = []
+        manager.notification_requested.connect(
+            lambda title, body: notices.append((title, body))
+        )
+        release = {"commit_sha": "b" * 40, "display_name": "main-bbbbbbbb"}
+        manager._handle_release_detected(dict(release))
+        manager._handle_release_detected(dict(release))
+        self.assertEqual(len(notices), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -695,6 +695,15 @@ class MainWindow(QMainWindow):
                 5000,
             )
             return
+        if self.isVisible():
+            popup = QMessageBox(self)
+            popup.setWindowTitle(title)
+            popup.setText(message)
+            popup.setStandardButtons(QMessageBox.StandardButton.Ok)
+            popup.setModal(False)
+            popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            popup.show()
+            return
         logger.info("%s: %s", title, message)
 
     def open_fetch_dialog(self) -> None:

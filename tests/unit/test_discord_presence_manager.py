@@ -163,6 +163,48 @@ class DiscordPresenceManagerTests(unittest.TestCase):
         manager.reload_settings()
         self.assertFalse(manager.connected)
 
+    def test_official_client_id_fallback_is_supported(self):
+        settings = FakeSettings({"discord_presence_enabled": True})
+        window = FakeMainWindow(settings)
+        manager = DiscordPresenceManager(window)
+        manager.presence_factory = FakePresence
+        manager.OFFICIAL_CLIENT_ID = "official-123"
+        manager.reload_settings()
+        self.assertEqual(manager.client_id, "official-123")
+
+    def test_settings_override_official_client_id(self):
+        settings = FakeSettings(
+            {
+                "discord_presence_enabled": True,
+                "discord_presence_client_id": "custom-456",
+            }
+        )
+        window = FakeMainWindow(settings)
+        manager = DiscordPresenceManager(window)
+        manager.presence_factory = FakePresence
+        manager.OFFICIAL_CLIENT_ID = "official-123"
+        manager.reload_settings()
+        self.assertEqual(manager.client_id, "custom-456")
+
+    def test_rate_limit_skips_redundant_push(self):
+        settings = FakeSettings(
+            {
+                "discord_presence_enabled": True,
+                "discord_presence_client_id": "123456",
+            }
+        )
+        window = FakeMainWindow(settings)
+        manager = DiscordPresenceManager(window)
+        manager.presence_factory = FakePresence
+        manager.reload_settings()
+        manager.last_payload = None
+        manager.last_push_at = 0.0
+        manager.update_presence(force=True)
+        first_count = len(manager.rpc.payloads)
+        manager.update_presence(force=False)
+        second_count = len(manager.rpc.payloads)
+        self.assertEqual(first_count, second_count)
+
 
 if __name__ == "__main__":
     unittest.main()

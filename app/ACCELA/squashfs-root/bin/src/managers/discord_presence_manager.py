@@ -19,6 +19,7 @@ class DiscordPresenceManager(QObject):
     """Discord Rich Presence with graceful reconnects and zero-noise behavior."""
 
     DEFAULT_CLIENT_ID_ENV = "ACCELA_DISCORD_CLIENT_ID"
+    OFFICIAL_CLIENT_ID = ""
     DEFAULT_REPO_URL = "https://github.com/Pedrohs1771/Accela-Compatible-Linux"
     DEFAULT_RELEASES_URL = (
         "https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/latest"
@@ -52,6 +53,7 @@ class DiscordPresenceManager(QObject):
         self.last_payload: Optional[dict[str, Any]] = None
         self.last_push_at = 0.0
         self.minimum_update_interval = 5.0
+        self._status_text = "Aguardando Discord"
 
         self.timer = QTimer(self)
         self.timer.setInterval(10000)
@@ -68,22 +70,26 @@ class DiscordPresenceManager(QObject):
         client_id = self._get_client_id()
 
         if not enabled:
+            self._status_text = "Desativado"
             self._disconnect(schedule_reconnect=False)
             return
 
         if self.presence_factory is None:
             logger.warning("Discord Rich Presence enabled, but pypresence is missing.")
+            self._status_text = "Dependência ausente"
             self._disconnect(schedule_reconnect=False)
             return
 
         if not client_id:
             logger.info(
-                "Discord Rich Presence aguardando Client ID. Defina ACCELA_DISCORD_CLIENT_ID ou configure nas opções avançadas."
+                "Discord Rich Presence aguardando um Client ID válido nesta build."
             )
+            self._status_text = "Aguardando Client ID"
             self._disconnect(schedule_reconnect=False)
             return
 
         if self.rpc and self.connected and self.client_id == client_id:
+            self._status_text = "Conectado ao Discord"
             self.timer.start()
             self.update_presence(force=True)
             return
@@ -134,17 +140,27 @@ class DiscordPresenceManager(QObject):
             self.last_payload = None
             self.timer.start()
             self.reconnect_timer.stop()
+            self._status_text = "Conectado ao Discord"
             self.update_presence(force=True)
             logger.info("Discord Rich Presence connected successfully.")
         except Exception as exc:
             logger.warning("Failed to initialize Discord Rich Presence: %s", exc)
+            self._status_text = "Aguardando Discord"
             self._disconnect(schedule_reconnect=True)
 
     def _get_client_id(self) -> str:
-        configured = self.settings.value("discord_presence_client_id", "", type=str).strip()
+        configured = self.settings.value(
+            "discord_presence_client_id", "", type=str
+        ).strip()
         if configured:
             return configured
-        return os.environ.get(self.DEFAULT_CLIENT_ID_ENV, "").strip()
+        from_env = os.environ.get(self.DEFAULT_CLIENT_ID_ENV, "").strip()
+        if from_env:
+            return from_env
+        return self.OFFICIAL_CLIENT_ID.strip()
+
+    def get_status_text(self) -> str:
+        return self._status_text
 
     def _build_payload(self) -> dict[str, Any]:
         details, state, key = self._build_activity_state()
@@ -268,6 +284,7 @@ class DiscordPresenceManager(QObject):
         self.rpc = None
         self.connected = False
         if schedule_reconnect and self.settings.value("discord_presence_enabled", True, type=bool):
+            self._status_text = "Aguardando Discord"
             self.reconnect_timer.start()
         else:
             self.reconnect_timer.stop()

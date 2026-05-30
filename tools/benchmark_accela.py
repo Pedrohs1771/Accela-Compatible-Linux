@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from core.platform.linux import LinuxBackend  # noqa: E402
+from managers.game_manager import GameManager  # noqa: E402
 
 
 def time_call(label, func):
@@ -55,13 +56,49 @@ def benchmark_linux_backend_scan():
         return round(elapsed, 4), install.libraries
 
 
+def benchmark_fake_library_scan(count: int = 1000):
+    class FakeSettings:
+        def value(self, key, default=None, type=None):  # noqa: A003
+            if type is bool:
+                return bool(default)
+            return default
+
+    class FakeMainWindow:
+        settings = FakeSettings()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir) / "Steam"
+        steamapps = root / "steamapps"
+        common = steamapps / "common"
+        common.mkdir(parents=True)
+
+        for index in range(count):
+            game_dir = common / f"Game {index:04d}"
+            game_dir.mkdir()
+            (game_dir / f"game{index}.exe").write_text("x", encoding="utf-8")
+            (steamapps / f"appmanifest_{100000 + index}.acf").write_text(
+                '"AppState"\n{\n\t"appid"\t\t"%s"\n\t"installdir"\t\t"%s"\n}\n'
+                % (100000 + index, game_dir.name),
+                encoding="utf-8",
+            )
+
+        manager = GameManager(FakeMainWindow())
+        started = time.perf_counter()
+        found = manager._scan_library(str(root), str(root))
+        elapsed = time.perf_counter() - started
+        return round(elapsed, 4), found
+
+
 def main():
     compileall_seconds = benchmark_compileall()
     scan_seconds, libraries = benchmark_linux_backend_scan()
+    fake_scan_seconds, fake_games = benchmark_fake_library_scan()
     payload = {
         "compileall_seconds": compileall_seconds,
         "linux_backend_scan_seconds": scan_seconds,
         "linux_backend_libraries": libraries,
+        "fake_library_scan_1000_seconds": fake_scan_seconds,
+        "fake_library_scan_1000_games_found": fake_games,
         "cwd": os.getcwd(),
     }
     print(json.dumps(payload, indent=2, ensure_ascii=False))
