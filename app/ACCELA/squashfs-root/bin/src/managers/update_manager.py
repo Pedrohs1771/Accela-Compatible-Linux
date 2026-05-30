@@ -30,6 +30,7 @@ class UpdateManager(QObject):
     DEFAULT_BRANCH = "main"
     MANIFEST_PATH = "release/latest.json"
     CHECK_CACHE_TTL_SECONDS = 300
+    HEARTBEAT_CHECK_SECONDS = 6 * 60 * 60
 
     def __init__(self, main_window):
         super().__init__(parent=main_window)
@@ -45,6 +46,7 @@ class UpdateManager(QObject):
         self._last_check_interactive = False
         self._last_check_payload: Optional[Dict[str, object]] = None
         self._prepare_timer: Optional[QTimer] = None
+        self._heartbeat_timer: Optional[QTimer] = None
         self.release_detected.connect(self._handle_release_detected)
 
     @property
@@ -54,6 +56,7 @@ class UpdateManager(QObject):
     def reload_settings(self) -> None:
         self._last_check_at = 0.0
         self._last_check_payload = None
+        self._configure_heartbeat()
 
     @classmethod
     def _version_metadata_file(cls) -> Path:
@@ -149,7 +152,23 @@ class UpdateManager(QObject):
         enabled = self.settings.value("github_updates_enabled", True, type=bool)
         if not enabled:
             return
+        self._configure_heartbeat()
         QTimer.singleShot(2500, lambda: self.check_for_updates_async(interactive=False))
+
+    def _configure_heartbeat(self) -> None:
+        enabled = self.settings.value("github_updates_enabled", True, type=bool)
+
+        if self._heartbeat_timer is None:
+            self._heartbeat_timer = QTimer(self)
+            self._heartbeat_timer.setInterval(self.HEARTBEAT_CHECK_SECONDS * 1000)
+            self._heartbeat_timer.timeout.connect(
+                lambda: self.check_for_updates_async(interactive=False)
+            )
+
+        if enabled:
+            self._heartbeat_timer.start()
+        else:
+            self._heartbeat_timer.stop()
 
     def check_for_updates_async(self, interactive: bool = False) -> None:
         if self._check_in_progress:
