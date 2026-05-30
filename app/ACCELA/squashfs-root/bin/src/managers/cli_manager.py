@@ -418,12 +418,19 @@ class CLITaskManager:
         auto_apply_goldberg = self.settings.value(
             "auto_apply_goldberg", False, type=bool
         )
-        if auto_apply_goldberg and self.game_data and self.current_dest_path:
+        online_mode = self.game_data.get("online_mode", False) if self.game_data else False
+        should_apply = (auto_apply_goldberg or online_mode) and self.game_data and self.current_dest_path
+        
+        if should_apply:
             game_directory = get_game_directory(self.current_dest_path, self.game_data)
             self.logger.info("Auto-applying Goldberg after download completion")
+            
+            # Use AppID 480 (Spacewar) for online_mode to enable multiplayer compatibility
+            target_appid = "480" if online_mode else str(self.game_data.get("appid", ""))
+            
             self._apply_goldberg(
                 game_directory,
-                str(self.game_data.get("appid", "")),
+                target_appid,
                 self.game_data.get("game_name", ""),
             )
             if sys.platform == "linux":

@@ -170,17 +170,17 @@ class TaskManager(QObject):
             self.job_finished()
             return
 
+        # Even if auto_skip_single_choice is enabled, we MUST show the dialog 
+        # if the user wants to enable online compatibility, as that checkbox 
+        # is only available in the DepotSelectionDialog.
         auto_skip_single_choice = self.settings.value(
             "auto_skip_single_choice", False, type=bool
         )
         depots = game_data.get("depots") or {}
-        if auto_skip_single_choice and len(depots) == 1:
-            selected_depots = list(depots.keys())
-            if self.game_data:
-                self.game_data["selected_depots_list"] = selected_depots
-                self._apply_default_linux_proton_selection(selected_depots)
-            self._start_download_with_destination(selected_depots)
-            return
+        
+        # Force showing the dialog ALWAYS to ensure the user can toggle 
+        # 'Ativar compatibilidade online'. The auto-skip was causing confusion.
+        pass
 
         self.main_window.ui_state.depot_dialog = DepotSelectionDialog(
             game_data["appid"],
@@ -522,15 +522,25 @@ class TaskManager(QObject):
 
     def _finalize_goldberg(self, auto_apply: bool):
         # 5. Goldberg
-        if not (auto_apply and not self.is_cancelling and self.current_dest_path):
+        # Check if online_mode was selected in the depot dialog
+        online_mode = self.game_data.get("online_mode", False) if self.game_data else False
+        
+        # Apply if global setting is ON OR if this specific install has online_mode enabled
+        should_apply = (auto_apply or online_mode) and not self.is_cancelling and self.current_dest_path
+        
+        if not should_apply:
             return
 
         game_dir = get_game_directory(self.current_dest_path, self.game_data)
 
         try:
+            # Pass the real AppID. The apply function will handle Spacewar (480) 
+            # and force_appid.txt automatically if online_mode is enabled.
+            real_appid = str(self.game_data.get("appid", ""))
+            
             self.apply_goldberg_to_game(
                 game_directory=game_dir,
-                appid=str(self.game_data.get("appid", "")),
+                appid=real_appid,
                 game_name=self.game_data.get("game_name", ""),
                 show_dialog=False,
             )
@@ -566,7 +576,10 @@ class TaskManager(QObject):
     @pyqtSlot()
     def _finalize_job_logic(self):
         """Called on Main Thread. Acts as a State Machine Conductor."""
-        if self._should_prompt_for_steam_restart():
+        # Force steam restart prompt to be pending if we applied Goldberg/Online mode
+        if self.game_data and self.game_data.get("online_mode"):
+            self.main_window.job_queue.steam_restart_prompt_pending = True
+        elif self._should_prompt_for_steam_restart():
             self.main_window.job_queue.steam_restart_prompt_pending = True
 
         steamless_enabled = self.settings.value("use_steamless", False, type=bool)
@@ -576,8 +589,11 @@ class TaskManager(QObject):
                 self.main_window.drop_text_label.setText(
                     f"Running Steamless: {self.game_data.get('game_name', '')}"
                 )
-                self._start_steamless_processing()
-                return
+                try:
+                    self._start_steamless_processing()
+                    return
+                except Exception as e:
+                    logger.error(f"Steamless failed to start: {e}")
 
         shortcuts_enabled = self.settings.value(
             "create_application_shortcuts", False, type=bool
@@ -604,8 +620,12 @@ class TaskManager(QObject):
                 self.main_window.drop_text_label.setText(
                     f"Generating Achievements: {self.game_data.get('game_name', '')}"
                 )
-                self._start_achievement_generation()
-                return
+                try:
+                    self._start_achievement_generation()
+                    return
+                except Exception as e:
+                    logger.error(f"Achievement generation failed to start: {e}")
+                    # Fall through to next step if it fails to start
 
         if (
             shortcuts_enabled
@@ -935,8 +955,33 @@ class TaskManager(QObject):
         renamed_files = self._backup_steam_api_files(target_dir)
         self._copy_goldberg_matching_files(target_dir, goldberg_src, renamed_files)
         self._copy_goldberg_common_files(target_dir, goldberg_src)
-        self._write_appid_file(target_dir, appid)
+        
+        # Check if we are in online_mode (Spacewar mode)
+        online_mode = self.game_data.get("online_mode", False) if self.game_data else False
+        
+        if online_mode:
+            # For online mode:
+            # 1. steam_appid.txt must be 480 (Spacewar)
+            self._write_appid_file(target_dir, "480")
+            # 2. force_appid.txt inside steam_settings must be the REAL AppID
+            self._write_force_appid_file(target_dir, appid)
+        else:
+            # Normal offline mode
+            self._write_appid_file(target_dir, appid)
+            
         self._generate_interfaces_for_valve_files(target_dir, goldberg_src)
+
+    def _write_force_appid_file(self, target_dir: str, appid: str):
+        """Write force_appid.txt in steam_settings folder."""
+        settings_dir = os.path.join(target_dir, "steam_settings")
+        os.makedirs(settings_dir, exist_ok=True)
+        force_appid_path = os.path.join(settings_dir, "force_appid.txt")
+        try:
+            with open(force_appid_path, "w", encoding="utf-8") as f:
+                f.write(str(appid))
+            logger.info(f"Wrote force_appid.txt with real AppID {appid} to {settings_dir}")
+        except OSError as e:
+            logger.warning(f"Failed to write force_appid.txt: {e}")
 
     def _backup_steam_api_files(self, directory: str) -> List[str]:
         """Rename all steam_api files to .valve. Return list of original filenames."""
@@ -1299,19 +1344,30 @@ class TaskManager(QObject):
             self._finalize_job_logic()
             return
 
+        # Check if SLScheevo exists before trying to run it
+        from utils.helpers import get_slscheevo_path
+        if not get_slscheevo_path().exists():
+            logger.error("SLScheevo dependency missing, skipping achievement generation.")
+            self._finalize_job_logic()
+            return
+
         logger.info("\n" + "=" * 40)
         logger.info("Starting Steam Achievement Generation...")
 
-        self.achievement_task = GenerateAchievementsTask()
-        self.achievement_task.progress.connect(logger.info)
+        try:
+            self.achievement_task = GenerateAchievementsTask()
+            self.achievement_task.progress.connect(logger.info)
 
-        self.achievement_task_runner = TaskRunner()
-        self.achievement_worker = self.achievement_task_runner.run(
-            self.achievement_task.run, app_id
-        )
-        self.achievement_task_runner.cleanup_complete.connect(
-            self._on_achievement_task_cleanup
-        )
+            self.achievement_task_runner = TaskRunner()
+            self.achievement_worker = self.achievement_task_runner.run(
+                self.achievement_task.run, app_id
+            )
+            self.achievement_task_runner.cleanup_complete.connect(
+                self._on_achievement_task_cleanup
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize achievement task: {e}")
+            self._finalize_job_logic()
 
         self._update_status_button_color()
         self._slscheevo_ran = True

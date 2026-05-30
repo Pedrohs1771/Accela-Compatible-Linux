@@ -140,6 +140,12 @@ class JobQueueManager(QObject):
                         "Steam restart prompt disabled by settings. Skipping prompt."
                     )
             elif self.jobs_completed_count > 0:
+                # Force bringing window to front if it was hidden/minimized
+                if self.main_window:
+                    self.main_window.show()
+                    self.main_window.raise_()
+                    self.main_window.activateWindow()
+                    
                 QMessageBox.information(
                     self.main_window,
                     "Fila concluída",

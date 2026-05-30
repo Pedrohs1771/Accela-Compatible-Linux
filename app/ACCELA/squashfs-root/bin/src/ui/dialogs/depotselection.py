@@ -213,6 +213,11 @@ class DepotSelectionDialog(QDialog):
         tool_row.addWidget(self.proton_combo, 1)
         section_layout.addLayout(tool_row)
 
+        self.online_checkbox = QCheckBox("Ativar compatibilidade online")
+        self.online_checkbox.setToolTip("Aplica emulador de Steam (Goldberg) para habilitar funcionalidades online/multiplayer.")
+        self.online_checkbox.setChecked(False)
+        section_layout.addWidget(self.online_checkbox)
+
         help_label = QLabel(
             "ACCELA aplica o modo de compatibilidade da Steam usando Proton "
             "Experimental por padrao quando houver depots Windows."
@@ -267,6 +272,7 @@ class DepotSelectionDialog(QDialog):
         defaults["proton_tool_display_name"] = (
             selected_text if defaults["force_proton"] else ""
         )
+        defaults["online_mode"] = self.online_checkbox.isChecked() if hasattr(self, "online_checkbox") else False
         return defaults
 
     @staticmethod
