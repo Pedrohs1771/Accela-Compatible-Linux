@@ -17,10 +17,6 @@ SHA_NAME="$ARCHIVE_NAME.sha256"
 SIG_NAME="$ARCHIVE_NAME.sig"
 SHA_PATH="$DIST_DIR/$SHA_NAME"
 SIG_PATH="$DIST_DIR/$SIG_NAME"
-WINDOWS_ARCHIVE_NAME="ACCELA-Windows-x64.zip"
-WINDOWS_ARCHIVE_PATH="$DIST_DIR/$WINDOWS_ARCHIVE_NAME"
-WINDOWS_SHA_NAME="$WINDOWS_ARCHIVE_NAME.sha256"
-WINDOWS_SHA_PATH="$DIST_DIR/$WINDOWS_SHA_NAME"
 REQUIREMENTS_FILE="$ROOT_DIR/app/ACCELA/squashfs-root/bin/requirements.txt"
 TEST_REPORT="$ROOT_DIR/TEST_REPORT.md"
 QA_REPORT_MD="$ROOT_DIR/QA_REPORT.md"
@@ -191,9 +187,6 @@ main() {
     fi
 
     gh release upload "$RELEASE_TAG" "$ARCHIVE_PATH" "$SHA_PATH" "$SIG_PATH" --clobber
-    if [ -f "$WINDOWS_ARCHIVE_PATH" ] && [ -f "$WINDOWS_SHA_PATH" ]; then
-        gh release upload "$RELEASE_TAG" "$WINDOWS_ARCHIVE_PATH" "$WINDOWS_SHA_PATH" --clobber
-    fi
 
     local package_url sha_url sig_url html_url
     package_url="https://github.com/$REPO_SLUG/releases/download/$RELEASE_TAG/$ARCHIVE_NAME"
