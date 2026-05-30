@@ -1,6 +1,6 @@
 # TEST REPORT
 
-- Date: 2026-05-30T16:54:43-03:00
+- Date: 2026-05-30T18:02:06-03:00
 - Host: Linux 7.0.10-arch1-1 #1 SMP PREEMPT_DYNAMIC Sat, 23 May 2026 14:21:20 +0000 x86_64 GNU/Linux
 - Python: Python 3.14.5
 
@@ -10,8 +10,10 @@
 - fresh venv install: requirements.txt
 - desktop-file-validate: accela.desktop (when tool is available)
 - JSON validation: release/latest.json
+- ACCELA QA Lab: tools/qa_all.py --release
 - shellcheck: skipped (not installed)
 - compileall: passed
 - fresh venv: passed
 - desktop file: passed
 - release/latest.json: valid
+- QA Lab: passed

@@ -950,14 +950,16 @@ class SettingsDialog(QDialog):
         self.discord_presence_checkbox = create_checkbox_setting(
             "Ativar Rich Presence do ACCELA",
             "discord_presence_enabled",
-            False,
+            True,
             self,
             "Atualiza o Discord em tempo real com status do launcher, downloads e biblioteca.",
         )
         rpc_layout.addWidget(self.discord_presence_checkbox)
 
         self.discord_client_id_input = QLineEdit()
-        self.discord_client_id_input.setPlaceholderText("Discord Application Client ID")
+        self.discord_client_id_input.setPlaceholderText(
+            "Discord Application Client ID ou use ACCELA_DISCORD_CLIENT_ID"
+        )
         self.discord_client_id_input.setText(
             self.settings.value("discord_presence_client_id", "", type=str)
         )
@@ -967,13 +969,15 @@ class SettingsDialog(QDialog):
         self.discord_large_image_input = QLineEdit()
         self.discord_large_image_input.setPlaceholderText("Asset key da imagem principal")
         self.discord_large_image_input.setText(
-            self.settings.value("discord_presence_large_image", "", type=str)
+            self.settings.value("discord_presence_large_image", "accela_large", type=str)
         )
         rpc_layout.addWidget(QLabel("Imagem principal"))
         rpc_layout.addWidget(self.discord_large_image_input)
 
         self.discord_small_image_input = QLineEdit()
-        self.discord_small_image_input.setPlaceholderText("Asset key da imagem secundária")
+        self.discord_small_image_input.setPlaceholderText(
+            "Opcional: deixe em branco para o ACCELA alternar por estado"
+        )
         self.discord_small_image_input.setText(
             self.settings.value("discord_presence_small_image", "", type=str)
         )
@@ -982,7 +986,7 @@ class SettingsDialog(QDialog):
 
         SettingsDialog._add_tool_explanation(
             rpc_layout,
-            "O Discord não aceita GIF bruto no Rich Presence. Use assets de imagem enviados na sua aplicação do Discord com a arte do ACCELA.",
+            "O Discord não aceita GIF bruto no Rich Presence. O ACCELA já alterna assets por estado; basta informar um Client ID válido e, se quiser, sobrescrever a imagem principal.",
         )
 
         rpc_group.setLayout(rpc_layout)

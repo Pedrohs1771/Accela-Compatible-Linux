@@ -1,7 +1,6 @@
 import logging
 import os
 import sys
-import re
 import psutil
 import subprocess
 
@@ -11,6 +10,8 @@ from core.linux_paths import (
     find_slssteam_paths,
     get_steam_launch_command,
 )
+from core.platform import get_platform_backend
+from core.platform.common import parse_libraryfolders_vdf
 
 logger = logging.getLogger(__name__)
 
@@ -19,33 +20,27 @@ _library_inject_so_path_cache = None
 
 
 def find_steam_install():
-    if sys.platform == "win32":
-        return _find_steam_windows()
-    elif sys.platform == "linux":
-        return _find_steam_linux()
-    else:
-        logger.warning(
-            f"Automatic Steam path detection is not supported on this OS: {sys.platform}."
-        )
-        return None
+    backend = get_platform_backend(sys.platform)
+    steam_path = backend.find_steam_install()
+    if steam_path:
+        logger.info("Found Steam installation at: %s", steam_path)
+        return steam_path
+
+    logger.warning(
+        "Automatic Steam path detection is not supported or failed on this OS: %s.",
+        sys.platform,
+    )
+    return None
 
 
 def _find_steam_windows():
-    try:
-        import winreg
-
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
-        steam_path, _ = winreg.QueryValueEx(key, "SteamPath")
-        winreg.CloseKey(key)
-        logger.info(f"Found Steam installation at: {steam_path}")
-        return os.path.normpath(steam_path)
-    except OSError:
-        logger.error("Failed to read Steam path from registry.")
-        return None
+    backend = get_platform_backend("win32")
+    return backend.find_steam_install()
 
 
 def _find_steam_linux():
-    root = find_primary_steam_root(preferred_mode=detect_linux_steam_mode())
+    backend = get_platform_backend("linux")
+    root = backend.find_steam_install()
     if root is not None:
         logger.info("Found Steam installation at: %s", root)
         return str(root)
@@ -55,34 +50,12 @@ def _find_steam_linux():
 
 
 def parse_library_folders(vdf_path):
-    library_paths = []
-    try:
-        with open(vdf_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        matches = re.findall(r"^\s*\"(?:path|\d+)\"\s*\"(.*?)\"", content, re.MULTILINE)
-        for path in matches:
-            normalized_path = path.replace("\\\\", "\\")
-            if os.path.isdir(os.path.join(normalized_path, "steamapps")):
-                library_paths.append(normalized_path)
-    except OSError as e:
-        logger.error(f"Failed to parse libraryfolders.vdf: {e}")
-    return library_paths
+    return parse_libraryfolders_vdf(vdf_path)
 
 
 def get_steam_libraries():
-    steam_path = find_steam_install()
-    if not steam_path:
-        return []
-
-    all_libraries = {os.path.realpath(steam_path)}
-    vdf_path = os.path.join(steam_path, "steamapps", "libraryfolders.vdf")
-
-    if os.path.exists(vdf_path):
-        additional_libraries = parse_library_folders(vdf_path)
-        for lib_path in additional_libraries:
-            all_libraries.add(os.path.realpath(lib_path))
-
-    return list(all_libraries)
+    backend = get_platform_backend(sys.platform)
+    return backend.get_steam_libraries()
 
 
 def get_preferred_steam_library():
@@ -93,18 +66,8 @@ def get_preferred_steam_library():
     2. Otherwise use the main Steam install path when valid.
     3. Fall back to the first detected library if any exist.
     """
-    libraries = get_steam_libraries()
-    if len(libraries) == 1:
-        return libraries[0]
-
-    steam_path = find_steam_install()
-    if steam_path and os.path.isdir(os.path.join(steam_path, "steamapps")):
-        return os.path.realpath(steam_path)
-
-    if libraries:
-        return libraries[0]
-
-    return None
+    backend = get_platform_backend(sys.platform)
+    return backend.get_preferred_steam_library()
 
 
 def kill_steam_process():
@@ -174,10 +137,10 @@ def start_steam():
             steam_path = find_steam_install()
             if not steam_path:
                 return "FAILED"
-            exe_path = os.path.join(steam_path, "steam.exe")
-            if not os.path.exists(exe_path):
+            launch_command = get_platform_backend("win32").get_steam_launch_command()
+            if not launch_command:
                 return "FAILED"
-            subprocess.Popen([exe_path])
+            subprocess.Popen(launch_command)
             return "SUCCESS"
 
         elif sys.platform == "linux":

@@ -293,6 +293,9 @@ class MainWindow(QMainWindow):
             self.update_manager.update_available_changed.connect(
                 self._handle_update_available_changed
             )
+            self.update_manager.notification_requested.connect(
+                self._show_background_notice
+            )
             self.update_manager.schedule_startup_check()
 
     def _setup_system_tray(self) -> None:
@@ -678,6 +681,21 @@ class MainWindow(QMainWindow):
     def _handle_update_available_changed(self, available: bool) -> None:
         if self.bottom_titlebar is not None:
             self.bottom_titlebar.set_update_badge_visible(available)
+        if self.tray_icon is not None:
+            self.tray_icon.setToolTip(
+                "ACCELA • update disponível" if available else "ACCELA"
+            )
+
+    def _show_background_notice(self, title: str, message: str) -> None:
+        if self.tray_icon is not None:
+            self.tray_icon.showMessage(
+                title,
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+            return
+        logger.info("%s: %s", title, message)
 
     def open_fetch_dialog(self) -> None:
         self.ui_state.fetch_dialog = FetchManifestDialog(self)

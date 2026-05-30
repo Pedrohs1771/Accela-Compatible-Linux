@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "name": "shell-syntax",
+      "ok": true,
+      "details": "bash -n passou"
+    },
+    {
+      "name": "compileall",
+      "ok": true,
+      "details": "Listing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/components'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/core'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/core/platform'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/core/tasks'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/data'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Goldberg'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Goldberg/genints'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Goldberg/linux'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Goldberg/steam_settings'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Goldberg/windows'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Steamless'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/deps/Steamless/Plugins'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/managers'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res/gif'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res/logo'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res/sonic'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res/sonic/gifs'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res/sonic/sounds'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/res/sounds'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/ui'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/ui/dialogs'...\nListing '/home/pedrohs/ACCELA/app/ACCELA/squashfs-root/bin/src/utils'..."
+    },
+    {
+      "name": "unit-tests",
+      "ok": true,
+      "details": "ok"
+    },
+    {
+      "name": "desktop-file",
+      "ok": true,
+      "details": "ok"
+    },
+    {
+      "name": "fresh-venv",
+      "ok": true,
+      "details": "deps ok"
+    },
+    {
+      "name": "benchmark",
+      "ok": true,
+      "details": "{\n  \"compileall_seconds\": 0.0676,\n  \"linux_backend_scan_seconds\": 0.0004,\n  \"linux_backend_libraries\": [\n    \"/tmp/tmpi0zawg91/Steam\",\n    \"/tmp/tmpi0zawg91/Extra\"\n  ],\n  \"cwd\": \"/home/pedrohs/ACCELA\"\n}"
+    },
+    {
+      "name": "docker-smoke",
+      "ok": true,
+      "details": "ubuntu:24.04: OK; fedora:41: OK; archlinux:latest: OK"
+    }
+  ],
+  "passed": true
+}

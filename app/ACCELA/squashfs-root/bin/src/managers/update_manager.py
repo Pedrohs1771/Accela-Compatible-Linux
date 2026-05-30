@@ -25,12 +25,15 @@ class UpdateManager(QObject):
     status_changed = pyqtSignal(str)
     release_detected = pyqtSignal(object)
     update_available_changed = pyqtSignal(bool)
+    notification_requested = pyqtSignal(str, str)
 
     DEFAULT_REPO = "Pedrohs1771/Accela-Compatible-Linux"
     DEFAULT_BRANCH = "main"
     MANIFEST_PATH = "release/latest.json"
-    CHECK_CACHE_TTL_SECONDS = 300
-    HEARTBEAT_CHECK_SECONDS = 6 * 60 * 60
+    CHECK_CACHE_TTL_SECONDS = 45
+    HEARTBEAT_CHECK_SECONDS = 120
+    STARTUP_CHECK_DELAY_MS = 750
+    PENDING_AUTO_UPDATE_RETRY_SECONDS = 15
 
     def __init__(self, main_window):
         super().__init__(parent=main_window)
@@ -47,6 +50,9 @@ class UpdateManager(QObject):
         self._last_check_payload: Optional[Dict[str, object]] = None
         self._prepare_timer: Optional[QTimer] = None
         self._heartbeat_timer: Optional[QTimer] = None
+        self._pending_auto_update_timer: Optional[QTimer] = None
+        self._pending_auto_update_release: Optional[Dict[str, str]] = None
+        self._announced_revision = ""
         self.release_detected.connect(self._handle_release_detected)
 
     @property
@@ -153,7 +159,10 @@ class UpdateManager(QObject):
         if not enabled:
             return
         self._configure_heartbeat()
-        QTimer.singleShot(2500, lambda: self.check_for_updates_async(interactive=False))
+        QTimer.singleShot(
+            self.STARTUP_CHECK_DELAY_MS,
+            lambda: self.check_for_updates_async(interactive=False, force=True),
+        )
 
     def _configure_heartbeat(self) -> None:
         enabled = self.settings.value("github_updates_enabled", True, type=bool)
@@ -162,24 +171,38 @@ class UpdateManager(QObject):
             self._heartbeat_timer = QTimer(self)
             self._heartbeat_timer.setInterval(self.HEARTBEAT_CHECK_SECONDS * 1000)
             self._heartbeat_timer.timeout.connect(
-                lambda: self.check_for_updates_async(interactive=False)
+                lambda: self.check_for_updates_async(interactive=False, force=False)
+            )
+
+        if self._pending_auto_update_timer is None:
+            self._pending_auto_update_timer = QTimer(self)
+            self._pending_auto_update_timer.setInterval(
+                self.PENDING_AUTO_UPDATE_RETRY_SECONDS * 1000
+            )
+            self._pending_auto_update_timer.timeout.connect(
+                self._retry_pending_auto_update
             )
 
         if enabled:
             self._heartbeat_timer.start()
         else:
             self._heartbeat_timer.stop()
+            if self._pending_auto_update_timer is not None:
+                self._pending_auto_update_timer.stop()
 
-    def check_for_updates_async(self, interactive: bool = False) -> None:
+    def check_for_updates_async(self, interactive: bool = False, force: bool = False) -> None:
         if self._check_in_progress:
             return
 
         if (
-            not interactive
+            not force
+            and not interactive
             and self._last_check_payload is not None
             and (time.time() - self._last_check_at) < self.CHECK_CACHE_TTL_SECONDS
         ):
-            self.latest_release = dict(self._last_check_payload.get("release", {})) or None
+            self.latest_release = (
+                dict(self._last_check_payload.get("release", {})) or None
+            )
             self.security_message = str(
                 self._last_check_payload.get(
                     "security_message",
@@ -230,6 +253,9 @@ class UpdateManager(QObject):
             return False
 
         self._install_in_progress = True
+        self._pending_auto_update_release = None
+        if self._pending_auto_update_timer is not None:
+            self._pending_auto_update_timer.stop()
         self._set_status(
             f"Instalando {release.get('display_name', release.get('tag_name', 'novo update'))}..."
         )
@@ -397,15 +423,35 @@ class UpdateManager(QObject):
 
         auto_update = self.settings.value("github_auto_update", False, type=bool)
         interactive = bool(release.get("interactive"))
+        revision = str(release.get("commit_sha", "")).strip()
+        latest = release.get("display_name", "novo update")
+        first_announcement = bool(revision) and revision != self._announced_revision
+
+        if first_announcement:
+            self._announced_revision = revision
+            self.notification_requested.emit(
+                "Atualização disponível",
+                f"{latest} pronto para baixar.",
+            )
 
         if auto_update and not interactive:
+            if self._is_busy_for_update():
+                self._pending_auto_update_release = dict(release)
+                if self._pending_auto_update_timer is not None:
+                    self._pending_auto_update_timer.start()
+                self._set_status(
+                    f"Update {latest} detectado. O download será preparado quando a fila ficar ociosa."
+                )
+                return
             self.install_update(release)
             return
 
         if not self.main_window.isVisible():
             return
 
-        latest = release.get("display_name", "novo update")
+        if not interactive and not first_announcement:
+            return
+
         message = QMessageBox(self.main_window)
         message.setWindowTitle("Atualização disponível")
         message.setText(f"O update {latest} está disponível no GitHub.")
@@ -418,6 +464,28 @@ class UpdateManager(QObject):
         message.setDefaultButton(QMessageBox.StandardButton.Yes)
         if message.exec() == QMessageBox.StandardButton.Yes:
             self.install_update(release)
+
+    def _retry_pending_auto_update(self) -> None:
+        if not self._pending_auto_update_release:
+            if self._pending_auto_update_timer is not None:
+                self._pending_auto_update_timer.stop()
+            return
+
+        if self._is_busy_for_update() or self._install_in_progress:
+            return
+
+        release = dict(self._pending_auto_update_release)
+        self._pending_auto_update_release = None
+        if self._pending_auto_update_timer is not None:
+            self._pending_auto_update_timer.stop()
+        self.install_update(release)
+
+    def _is_busy_for_update(self) -> bool:
+        task_manager = getattr(self.main_window, "task_manager", None)
+        if task_manager is not None and getattr(task_manager, "is_processing", False):
+            return True
+        queue = getattr(getattr(self.main_window, "job_queue", None), "job_queue", None)
+        return bool(queue)
 
     def _github_headers(self) -> Dict[str, str]:
         return {

@@ -19,6 +19,8 @@ SHA_PATH="$DIST_DIR/$SHA_NAME"
 SIG_PATH="$DIST_DIR/$SIG_NAME"
 REQUIREMENTS_FILE="$ROOT_DIR/app/ACCELA/squashfs-root/bin/requirements.txt"
 TEST_REPORT="$ROOT_DIR/TEST_REPORT.md"
+QA_REPORT_MD="$ROOT_DIR/QA_REPORT.md"
+QA_REPORT_JSON="$ROOT_DIR/QA_REPORT.json"
 
 run_test() {
     local label="$1"
@@ -56,6 +58,7 @@ generate_test_report() {
     append_report "- fresh venv install: requirements.txt"
     append_report "- desktop-file-validate: accela.desktop (when tool is available)"
     append_report "- JSON validation: release/latest.json"
+    append_report "- ACCELA QA Lab: tools/qa_all.py --release"
 }
 
 run_preflight() {
@@ -108,6 +111,9 @@ PY
         run_test "validate release/latest.json" validate_json_file "$RELEASE_DIR/latest.json"
         append_report "- release/latest.json: valid"
     fi
+
+    run_test "ACCELA QA Lab release gate" python3 "$ROOT_DIR/tools/qa_all.py" --release
+    append_report "- QA Lab: passed"
 }
 
 write_manifest() {
@@ -127,11 +133,13 @@ target = Path(sys.argv[1])
 payload = {
     "version": sys.argv[2],
     "display_name": sys.argv[2],
+    "channel": "rolling",
     "commit_sha": sys.argv[3],
     "package_url": sys.argv[4],
     "sha256_url": sys.argv[5],
     "signature_url": sys.argv[6],
     "html_url": sys.argv[7],
+    "published_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
     "notes": "Canal rolling do ACCELA.",
 }
 target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -184,7 +192,7 @@ main() {
 
     write_manifest "$display_name" "$commit_sha" "$package_url" "$sha_url" "$sig_url" "$html_url"
 
-    git add "$RELEASE_DIR/latest.json" "$PUBLIC_KEY" "$TEST_REPORT"
+    git add "$RELEASE_DIR/latest.json" "$PUBLIC_KEY" "$TEST_REPORT" "$QA_REPORT_MD" "$QA_REPORT_JSON"
     if ! git diff --cached --quiet; then
         git commit -m "update rolling manifest $display_name"
         git push origin main
