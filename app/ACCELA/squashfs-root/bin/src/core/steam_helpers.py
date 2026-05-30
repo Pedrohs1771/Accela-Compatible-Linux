@@ -5,6 +5,13 @@ import re
 import psutil
 import subprocess
 
+from core.linux_paths import (
+    detect_linux_steam_mode,
+    find_primary_steam_root,
+    find_slssteam_paths,
+    get_steam_launch_command,
+)
+
 logger = logging.getLogger(__name__)
 
 _slssteam_so_path_cache = None
@@ -38,23 +45,10 @@ def _find_steam_windows():
 
 
 def _find_steam_linux():
-    home_dir = os.path.expanduser("~")
-    potential_paths = [
-        os.path.join(home_dir, ".steam", "root"),
-        os.path.join(home_dir, ".steam", "steam"),
-        os.path.join(home_dir, ".steam", "debian-installation"),
-        os.path.join(home_dir, ".local", "share", "Steam"),
-        os.path.join(
-            home_dir, ".var", "app", "com.valvesoftware.Steam", "data", "Steam"
-        ),
-        os.path.join(home_dir, "snap", "steam", "common", ".steam", "steam"),
-    ]
-
-    for path in potential_paths:
-        if os.path.isdir(os.path.join(path, "steamapps")):
-            real_path = os.path.realpath(path)
-            logger.info(f"Found Steam installation at: {real_path} (from {path})")
-            return real_path
+    root = find_primary_steam_root(preferred_mode=detect_linux_steam_mode())
+    if root is not None:
+        logger.info("Found Steam installation at: %s", root)
+        return str(root)
 
     logger.error("Could not find Steam installation in common Linux directories.")
     return None
@@ -187,38 +181,31 @@ def start_steam():
             return "SUCCESS"
 
         elif sys.platform == "linux":
-            # For Linux, we now need to handle SLSsteam.so AND library-inject.so
+            steam_mode = detect_linux_steam_mode()
+            launch_command = get_steam_launch_command(steam_mode)
+            if not launch_command:
+                logger.warning("Could not determine how to launch Steam on Linux.")
+                return "FAILED"
+
+            if steam_mode == "flatpak":
+                logger.info(
+                    "Launching Steam Flatpak directly via host command: %s",
+                    " ".join(launch_command),
+                )
+                subprocess.Popen(launch_command)
+                return "SUCCESS"
+
             slssteam_path = _slssteam_so_path_cache
             library_inject_path = _library_inject_so_path_cache
 
-            # Try default locations if not cached
-            if not slssteam_path:
-                default_slssteam_paths = [
-                    "/usr/lib32/libSLSsteam.so",
-                    os.path.expanduser("~/.local/share/SLSsteam/SLSsteam.so"),
-                    os.path.expanduser(
-                        "~/.var/app/com.valvesoftware.Steam/.local/share/SLSsteam/SLSsteam.so"
-                    ),
-                ]
-                for path in default_slssteam_paths:
-                    if os.path.exists(path):
-                        slssteam_path = path
-                        logger.info(f"Found SLSsteam.so at: {path}")
-                        break
-
-            if not library_inject_path:
-                default_library_inject_paths = [
-                    "/usr/lib32/libSLS-library-inject.so",
-                    os.path.expanduser("~/.local/share/SLSsteam/library-inject.so"),
-                    os.path.expanduser(
-                        "~/.var/app/com.valvesoftware.Steam/.local/share/SLSsteam/library-inject.so"
-                    ),
-                ]
-                for path in default_library_inject_paths:
-                    if os.path.exists(path):
-                        library_inject_path = path
-                        logger.info(f"Found library-inject.so at: {path}")
-                        break
+            if not slssteam_path or not library_inject_path:
+                detected_slssteam_path, detected_library_inject_path = (
+                    find_slssteam_paths(steam_mode)
+                )
+                slssteam_path = slssteam_path or detected_slssteam_path
+                library_inject_path = (
+                    library_inject_path or detected_library_inject_path
+                )
 
             # If we have both libraries, start with them
             if slssteam_path and library_inject_path:
@@ -227,7 +214,9 @@ def start_steam():
                 ):
                     # Start Steam with both libraries
                     success = start_steam_with_slssteam(
-                        slssteam_path, library_inject_path
+                        slssteam_path,
+                        library_inject_path,
+                        launch_command=launch_command,
                     )
                     # Only clear caches if successful
                     if success == "SUCCESS":
@@ -236,7 +225,7 @@ def start_steam():
                     return success
                 else:
                     logger.warning("Cached library paths no longer exist")
-                    return "NEEDS_USER_PATH"
+                    return "MISSING_SLSSTEAM"
             else:
                 # Missing one or both libraries
                 missing = []
@@ -245,7 +234,7 @@ def start_steam():
                 if not library_inject_path:
                     missing.append("library-inject.so")
                 logger.warning(f"Missing libraries: {', '.join(missing)}")
-                return "NEEDS_USER_PATH"
+                return "MISSING_SLSSTEAM"
         else:
             return "FAILED"
     except (OSError, subprocess.SubprocessError) as e:
@@ -253,7 +242,9 @@ def start_steam():
         return "FAILED"
 
 
-def start_steam_with_slssteam(slssteam_path=None, library_inject_path=None):
+def start_steam_with_slssteam(
+    slssteam_path=None, library_inject_path=None, launch_command=None
+):
     """Start Steam on Linux with SLSsteam.so AND library-inject.so via LD_AUDIT
     Returns: "SUCCESS", "FAILED", or "NEEDS_USER_PATH"
     """
@@ -279,7 +270,9 @@ def start_steam_with_slssteam(slssteam_path=None, library_inject_path=None):
         )
         env = os.environ.copy()
         env["LD_AUDIT"] = f"{library_inject_path}:{slssteam_path}"
-        subprocess.Popen(["steam"], env=env)
+        command = launch_command or get_steam_launch_command("native") or ["steam"]
+        logger.info("Starting Steam command: %s", " ".join(command))
+        subprocess.Popen(command, env=env)
         return "SUCCESS"
     except (OSError, subprocess.SubprocessError) as e:
         logger.error(

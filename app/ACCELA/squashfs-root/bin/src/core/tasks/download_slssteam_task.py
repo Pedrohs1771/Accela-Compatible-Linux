@@ -9,6 +9,12 @@ from typing import Dict, Optional
 import requests
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core.linux_paths import (
+    get_slssteam_install_dir,
+    get_slssteam_setup_command,
+    list_steam_roots,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +41,7 @@ class DownloadSLSsteamTask(QObject):
 
     @classmethod
     def install_dir(cls) -> Path:
-        return Path.home() / ".local" / "share" / "SLSsteam"
+        return get_slssteam_install_dir()
 
     @classmethod
     def version_file(cls) -> Path:
@@ -205,8 +211,10 @@ class DownloadSLSsteamTask(QObject):
             setup_path.write_text(response.text, encoding="utf-8")
 
         os.chmod(setup_path, 0o755)
+        setup_command = get_slssteam_setup_command()
+        logger.info("Running SLSsteam setup command: %s", setup_command)
         subprocess.run(
-            ["bash", str(setup_path), "install"],
+            ["bash", str(setup_path), setup_command],
             cwd=str(setup_path.parent),
             check=True,
             env=os.environ.copy(),
@@ -221,16 +229,8 @@ class DownloadSLSsteamTask(QObject):
 
     @staticmethod
     def _find_steamclient() -> Optional[Path]:
-        candidates = [
-            Path.home()
-            / ".local"
-            / "share"
-            / "Steam"
-            / "ubuntu12_32"
-            / "steamclient.so",
-            Path.home() / ".steam" / "steam" / "ubuntu12_32" / "steamclient.so",
-        ]
-        for candidate in candidates:
+        for root in list_steam_roots():
+            candidate = root / "ubuntu12_32" / "steamclient.so"
             if candidate.exists():
                 return candidate
         return None

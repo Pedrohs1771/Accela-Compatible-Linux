@@ -279,17 +279,22 @@ detect_steam_mode() {
         return
     fi
 
+    if [ -d "$HOME/.var/app/com.valvesoftware.Steam/data/Steam" ] || [ -d "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam" ]; then
+        STEAM_MODE="Flatpak"
+        return
+    fi
+
     if need_cmd snap && snap list steam >/dev/null 2>&1; then
         STEAM_MODE="Snap"
         return
     fi
 
-    if [ -d "$HOME/snap/steam" ]; then
+    if [ -d "$HOME/snap/steam/common/.local/share/Steam" ] || [ -d "$HOME/snap/steam/common/.steam/steam" ]; then
         STEAM_MODE="Snap"
         return
     fi
 
-    if [ -d "$HOME/.local/share/Steam" ] || [ -d "$HOME/.steam/steam" ] || need_cmd steam; then
+    if [ -d "$HOME/.local/share/Steam" ] || [ -d "$HOME/.steam/steam" ] || [ -d "$HOME/.steam/root" ] || [ -d "$HOME/.steam/debian-installation" ] || need_cmd steam; then
         STEAM_MODE="Nativa"
         return
     fi
@@ -947,8 +952,15 @@ install_slssteam() {
         return
     fi
 
-    local tmp_dir archive release_json asset_url latest_version setup_script
+    local tmp_dir archive release_json asset_url latest_version setup_script setup_mode
     local version_file="$HOME/.local/share/SLSsteam/VERSION"
+
+    if [ "$STEAM_MODE" = "Flatpak" ]; then
+        setup_mode="flatpak-install"
+        version_file="$HOME/.var/app/com.valvesoftware.Steam/.local/share/SLSsteam/VERSION"
+    else
+        setup_mode="install"
+    fi
 
     tmp_dir="$(mktemp -d)"
     archive="$tmp_dir/SLSsteam-Any.7z"
@@ -1011,7 +1023,7 @@ PY
         chmod +x "$tmp_dir/extract/setup.sh"
         (
             cd "$tmp_dir/extract"
-            bash "./setup.sh" install
+            bash "./setup.sh" "$setup_mode"
         )
     else
         setup_script="$tmp_dir/setup.sh"
@@ -1021,12 +1033,12 @@ PY
         chmod +x "$setup_script"
         (
             cd "$tmp_dir/extract"
-            bash "$setup_script" install
+            bash "$setup_script" "$setup_mode"
         )
     fi
 
     if [ -n "$latest_version" ]; then
-        mkdir -p "$HOME/.local/share/SLSsteam"
+        mkdir -p "$(dirname "$version_file")"
         printf '%s\n' "$latest_version" > "$version_file"
     fi
 }

@@ -3,8 +3,8 @@ import sys
 import logging
 import time
 import threading
-from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, QTimer, QObject
+from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, QTimer, QObject, pyqtSignal
 
 from core import steam_helpers
 
@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class JobQueueManager(QObject):
+    user_message_requested = pyqtSignal(str, str, str)
+
     def __init__(self, main_window):
         super().__init__(parent=main_window)
         self.main_window = main_window
@@ -19,6 +21,7 @@ class JobQueueManager(QObject):
         self.jobs_completed_count = 0
         self.steam_restart_prompt_pending = False
         self.is_showing_completion_dialog = False
+        self.user_message_requested.connect(self._show_message_box)
 
     def add_job(self, file_path, metadata=None):
         """Add a job to the queue (Thread-Safe)"""
@@ -214,11 +217,12 @@ class JobQueueManager(QObject):
 
                 result = steam_helpers.start_steam()
 
-                if result == "NEEDS_USER_PATH":
-                    QMetaObject.invokeMethod(
-                        self.main_window,
-                        "handle_linux_steam_path_selection",
-                        Qt.ConnectionType.QueuedConnection,
+                if result == "MISSING_SLSSTEAM":
+                    self._show_message_safe(
+                        "SLSsteam não encontrado",
+                        "O Steam foi detectado, mas o SLSsteam não está instalado corretamente para esta instalação. "
+                        "Abra Configurações e use 'Instalar/atualizar SLSsteam' para corrigir.",
+                        "warning",
                     )
                 elif result == "SUCCESS":
                     logger.info("Steam started successfully with cached libraries.")
@@ -227,6 +231,7 @@ class JobQueueManager(QObject):
                     self._show_message_safe(
                         "Falha na execução",
                         "Não foi possível iniciar o Steam.",
+                        "critical",
                     )
 
             else:
@@ -272,10 +277,17 @@ class JobQueueManager(QObject):
         except Exception as e:
             logger.error(f"Error during Steam restart: {e}")
 
-    @staticmethod
-    def _show_message_safe(title, text):
-        """Helper to show MessageBox from background thread"""
-        logger.error(f"MSG: {title} - {text}")
+    def _show_message_box(self, title, text, level):
+        parent = self.main_window if self.main_window and self.main_window.isVisible() else QApplication.activeWindow()
+        if level == "warning":
+            QMessageBox.warning(parent, title, text)
+            return
+        QMessageBox.critical(parent, title, text)
+
+    def _show_message_safe(self, title, text, level="critical"):
+        """Forward a message box request to the main Qt thread."""
+        logger.error("MSG: %s - %s", title, text)
+        self.user_message_requested.emit(title, text, level)
 
     def clear(self):
         """Clear the job queue"""
