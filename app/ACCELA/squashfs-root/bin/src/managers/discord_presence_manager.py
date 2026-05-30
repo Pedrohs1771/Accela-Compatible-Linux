@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 class DiscordPresenceManager(QObject):
     """Discord Rich Presence with graceful reconnects and zero-noise behavior."""
 
-    DEFAULT_CLIENT_ID_ENV = "ACCELA_DISCORD_CLIENT_ID"
-    OFFICIAL_CLIENT_ID = ""
+    DEFAULT_CLIENT_ID_ENV = "1510404860271525958"
+    OFFICIAL_CLIENT_ID = "1510404860271525958"
     DEFAULT_REPO_URL = "https://github.com/Pedrohs1771/Accela-Compatible-Linux"
     DEFAULT_RELEASES_URL = (
         "https://github.com/Pedrohs1771/Accela-Compatible-Linux/releases/latest"
