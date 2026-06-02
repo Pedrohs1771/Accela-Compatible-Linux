@@ -1,77 +1,225 @@
-# Luma Tools
+<div align="center">
 
-O **Luma Tools** e um launcher focado em biblioteca, manifests, downloads e integracao com Steam. Esta edicao mantem a interface visual do projeto e entrega instalacao simples, atualizacoes pelo GitHub e Discord Rich Presence configurado por padrao.
+# 🌙 Luma Tools
 
-## Principais recursos
+### Launcher moderno em pt-BR para Linux e Windows
 
-- Biblioteca integrada com scan automatico da Steam
-- Download e fila de manifests com processamento local
-- Integracao com Steam no Linux
-- Port de Windows em beta
-- Update Center com pacote remoto, rollback e verificacao de integridade
-- Discord Rich Presence com assets oficiais e botao para o repositorio
+Gerencie biblioteca, manifests, depots, downloads, integração Steam, updates pelo GitHub e Discord Rich Presence em uma interface simples e bonita.
 
-## Instalacao Linux
+<br>
 
-1. Baixe o asset Linux da release estavel.
-2. Extraia o ZIP em qualquer pasta.
-3. Entre na pasta extraida.
-4. Execute:
+![Linux](https://img.shields.io/badge/Linux-Stable-success?style=for-the-badge&logo=linux)
+![Windows](https://img.shields.io/badge/Windows-Beta-blue?style=for-the-badge&logo=windows)
+![Python](https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python)
+![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)
+
+<br>
+
+## 🚀 Instalação rápida
+
+### 🐧 Linux
 
 ```bash
-bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/LumaTools-Linux/main/install.sh)
 ```
 
-5. Abra com:
+Depois abra com:
 
 ```bash
 lumatools
 ```
 
-### Linux manual/portatil
+### 🪟 Windows Beta
 
-Se voce nao quiser instalar no sistema:
+Baixe a versão beta em:
 
-1. Extraia o ZIP.
-2. Entre na pasta extraida.
-3. Rode direto:
+```txt
+https://github.com/Pedrohs1771/LumaTools-Linux/releases
+```
+
+Extraia o arquivo Windows e abra:
+
+```txt
+Launch-LumaTools.cmd
+```
+
+</div>
+
+---
+
+## ✨ Destaques
+
+### 📦 Manifests e Depots
+
+O Luma Tools facilita o fluxo completo de instalação e organização:
+
+```txt
+Biblioteca → Manifests → Depots → Download → Processamento → Steam
+```
+
+Com suporte a seleção de depots, organização automática e integração com a biblioteca local.
+
+---
+
+### 🎮 Biblioteca integrada
+
+Detecta e organiza jogos em uma interface simples, com foco em praticidade para quem quer baixar, configurar e abrir sem ficar mexendo em pasta manualmente.
+
+---
+
+### 🔄 Update Center
+
+Sistema de atualização integrado via GitHub:
+
+- verifica novas versões;
+- baixa updates;
+- valida arquivos;
+- mantém o app atualizado;
+- prepara rollback caso algo dê errado.
+
+---
+
+### 🐧 Linux Stable
+
+A versão Linux é o foco principal do projeto.
+
+Recursos principais:
+
+- instalador automático;
+- launcher local;
+- integração com Steam;
+- suporte a ambiente Arch Linux e derivados;
+- execução por comando `lumatools`;
+- pacote portátil via release.
+
+---
+
+### 🪟 Windows Beta
+
+A versão Windows está em fase beta.
+
+Ela inclui:
+
+- launcher `.cmd`;
+- scripts PowerShell;
+- estrutura portada;
+- build experimental;
+- suporte inicial para Windows 10 e Windows 11.
+
+---
+
+### 🎧 Discord Rich Presence
+
+O Luma Tools inclui Discord Rich Presence por padrão.
+
+Mostra o status do launcher no Discord e tenta evitar conflito quando um jogo já possui presença própria.
+
+---
+
+## 📥 Downloads
+
+Também é possível baixar manualmente pela aba Releases:
+
+```txt
+https://github.com/Pedrohs1771/LumaTools-Linux/releases
+```
+
+Arquivos recomendados:
+
+| Sistema | Arquivo |
+|---|---|
+| Linux | `LumaTools-Linux-x64.zip` |
+| Windows Beta | `LumaTools-Windows-x64-built-under-wine.zip` |
+| Windows Dev/Source | `LumaTools-Windows-Port-Complete.zip` |
+
+---
+
+## 🐧 Instalação manual no Linux
+
+Baixe o pacote Linux na aba Releases, extraia e rode:
+
+```bash
+bash install.sh
+```
+
+Depois abra com:
+
+```bash
+lumatools
+```
+
+Modo portátil:
 
 ```bash
 ./lumatools
 ```
 
-ou
+ou:
 
 ```bash
 ./app/LumaTools/squashfs-root/AppRun
 ```
 
-## Windows Beta
+---
 
-O Windows ainda esta em **beta**.
+## 🪟 Instalação manual no Windows Beta
 
-### Opcao 1: pacote beta pronto
+Baixe o pacote Windows na aba Releases.
 
-1. Baixe o asset `LumaTools-Windows-x64-built-under-wine.zip`.
-2. Extraia o ZIP.
-3. Entre na pasta extraida.
-4. Rode `Launch-LumaTools.cmd`.
+Extraia o `.zip` e execute:
 
-Se quiser instalar no perfil do usuario:
+```txt
+Launch-LumaTools.cmd
+```
 
-1. Clique com o botao direito em `install_windows.ps1`.
-2. Execute com PowerShell.
+Para instalar no perfil do usuário, execute com PowerShell:
 
-Isso instala em `%LOCALAPPDATA%\\Programs\\LumaTools` e cria atalhos.
+```powershell
+.\install_windows.ps1
+```
 
-### Opcao 2: port/source beta
+Caminho padrão:
 
-Se voce quiser rebuildar o bundle do Windows:
+```txt
+%LOCALAPPDATA%\Programs\LumaTools
+```
 
-1. Baixe o asset `LumaTools-Windows-Port-Complete.zip`.
-2. Extraia o ZIP.
-3. No Windows, abra PowerShell na pasta.
-4. Rode:
+---
+
+## 🧠 Estrutura do projeto
+
+```txt
+LumaTools-Linux/
+├── app/LumaTools/          # Aplicação principal
+├── release/                # Pacotes e arquivos de release
+├── windows/                # Port Windows Beta
+├── tools/                  # Scripts auxiliares
+├── tests/                  # Testes
+├── docs/                   # Documentação
+├── install.sh              # Instalador Linux
+├── install_windows.ps1     # Instalador Windows
+├── build_windows.ps1       # Build Windows
+└── README.md
+```
+
+---
+
+## 👨‍💻 Desenvolvimento
+
+Clone o projeto:
+
+```bash
+git clone https://github.com/Pedrohs1771/LumaTools-Linux
+cd LumaTools-Linux
+```
+
+Ambiente dev:
+
+```bash
+bash dev-install.sh
+```
+
+Build Windows:
 
 ```powershell
 .\build_windows.ps1
@@ -83,12 +231,31 @@ ou:
 python .\tools\build_windows.py
 ```
 
-Depois disso, use:
+---
 
-```powershell
-.\dist\LumaTools-Windows-x64\Launch-LumaTools.cmd
-```
+## 🛠️ Recursos planejados
 
-## Discord Rich Presence
+- Melhorador automático de compatibilidade;
+- interface mais refinada;
+- sistema de plugins;
+- melhorias no Windows Beta;
+- logs visuais dentro do app;
+- auto-update com reinício automático;
+- painel avançado de depots/manifests;
+- integração mais profunda com Steam.
 
-O Rich Presence do Luma Tools vem ativado por padrao. Quando o Discord estiver aberto, o launcher publica seu estado automaticamente e inclui um botao para o repositorio oficial. Quando um jogo detectado pela biblioteca entra em execucao, o Presence do Luma Tools e ocultado para nao disputar espaco com o Presence do jogo.
+---
+
+## 📄 Licença
+
+Distribuído sob licença MIT.
+
+---
+
+<div align="center">
+
+### 🌙 Luma Tools
+
+Feito para deixar biblioteca, depots, manifests e Steam integration mais simples.
+
+</div>
