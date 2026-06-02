@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# LumaTools Terminal Wrapper
+exec ~/.local/share/LumaTools/squashfs-root/bin/run.sh "$@"

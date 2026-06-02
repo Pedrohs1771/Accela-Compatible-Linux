@@ -1,1 +1,0 @@
-# ACCELA unit tests

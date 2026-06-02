@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=LumaTools
+Comment=ＧｏＤ_Ｉｓ_ｉＮ_ｔＨｅ_ＷｉＲｅＤ
+Exec=run.sh
+Icon=lumatools
+Terminal=false
+Type=Application
+Categories=Game;
+StartupNotify=true
+StartupWMClass=lumatools
+MimeType=x-scheme-handler/lumatools;

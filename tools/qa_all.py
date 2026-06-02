@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "app" / "ACCELA" / "squashfs-root" / "bin" / "src"
-REQUIREMENTS = ROOT / "app" / "ACCELA" / "squashfs-root" / "bin" / "requirements.txt"
+SRC = ROOT / "app" / "LumaTools" / "squashfs-root" / "bin" / "src"
+REQUIREMENTS = ROOT / "app" / "LumaTools" / "squashfs-root" / "bin" / "requirements.txt"
 REPORT_MD = ROOT / "QA_REPORT.md"
 REPORT_JSON = ROOT / "QA_REPORT.json"
 APP_VENV_PYTHON = (
-    ROOT / "app" / "ACCELA" / "squashfs-root" / "bin" / ".venv" / "bin" / "python"
+    ROOT / "app" / "LumaTools" / "squashfs-root" / "bin" / ".venv" / "bin" / "python"
 )
 QA_VENV_DIR = ROOT / ".qa-venv"
 
@@ -94,8 +94,8 @@ def check_shell_syntax() -> str:
         ROOT / "install.sh",
         ROOT / "dev-install.sh",
         ROOT / "publish-update.sh",
-        ROOT / "app" / "ACCELA" / "squashfs-root" / "AppRun",
-        ROOT / "app" / "ACCELA" / "squashfs-root" / "bin" / "run.sh",
+        ROOT / "app" / "LumaTools" / "squashfs-root" / "AppRun",
+        ROOT / "app" / "LumaTools" / "squashfs-root" / "bin" / "run.sh",
     ]
     for script in scripts:
         ensure_ok(run(["bash", "-n", str(script)]), f"bash -n {script.name}")
@@ -120,7 +120,7 @@ def check_unit_tests() -> str:
 def check_fresh_venv() -> str:
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="accela-qa-venv-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="lumatools-qa-venv-") as tmp:
         venv_dir = Path(tmp) / "venv"
         ensure_ok(run([sys.executable, "-m", "venv", str(venv_dir)]), "python -m venv")
         pip = venv_dir / "bin" / "pip"
@@ -140,7 +140,7 @@ def check_fresh_venv() -> str:
 
 
 def check_benchmark() -> str:
-    return ensure_ok(run([ensure_gui_test_python(), str(ROOT / "tools" / "benchmark_accela.py")]), "benchmark")
+    return ensure_ok(run([ensure_gui_test_python(), str(ROOT / "tools" / "benchmark_lumatools.py")]), "benchmark")
 
 
 def check_desktop_file() -> str:
@@ -148,7 +148,7 @@ def check_desktop_file() -> str:
     if not validator:
         return "desktop-file-validate indisponível"
     return ensure_ok(
-        run([validator, str(ROOT / "app" / "ACCELA" / "squashfs-root" / "ACCELA.desktop")]),
+        run([validator, str(ROOT / "app" / "LumaTools" / "squashfs-root" / "LumaTools.desktop")]),
         "desktop-file-validate",
     )
 
@@ -204,7 +204,7 @@ def write_report(results: list[StepResult]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="ACCELA QA Lab")
+    parser = argparse.ArgumentParser(description="LumaTools QA Lab")
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--full", action="store_true")

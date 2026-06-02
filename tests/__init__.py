@@ -1,1 +1,0 @@
-# ACCELA QA test package

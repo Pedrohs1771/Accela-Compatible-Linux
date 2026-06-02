@@ -6,11 +6,11 @@
 
 ## Checks
 - bash -n: install.sh, dev-install.sh, publish-update.sh, AppRun, run.sh
-- python compileall: app/ACCELA/squashfs-root/bin/src
+- python compileall: app/LumaTools/squashfs-root/bin/src
 - fresh venv install: requirements.txt
-- desktop-file-validate: accela.desktop (when tool is available)
+- desktop-file-validate: lumatools.desktop (when tool is available)
 - JSON validation: release/latest.json
-- ACCELA QA Lab: tools/qa_all.py --release
+- LumaTools QA Lab: tools/qa_all.py --release
 - shellcheck: skipped (not installed)
 - compileall: passed
 - fresh venv: passed

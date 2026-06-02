@@ -1,0 +1,1 @@
+def get_game_directory(app_id): return ''

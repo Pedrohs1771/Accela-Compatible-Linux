@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-DEFAULT_APP_SOURCE="$ROOT_DIR/app/ACCELA"
+DEFAULT_APP_SOURCE="$ROOT_DIR/app/LumaTools"
 INSTALLED_APP_SOURCE="$ROOT_DIR"
 BIN_DIR="$HOME/.local/bin"
 APPS_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ACCELA"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/ACCELA"
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ACCELA"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/LumaTools"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/LumaTools"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/LumaTools"
 
 APP_SOURCE=""
 DEST_DIR=""
@@ -92,15 +92,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 log() {
-    printf '[ACCELA] %s\n' "$1"
+    printf '[LumaTools] %s\n' "$1"
 }
 
 warn() {
-    printf '[ACCELA] Aviso: %s\n' "$1" >&2
+    printf '[LumaTools] Aviso: %s\n' "$1" >&2
 }
 
 die() {
-    printf '[ACCELA] Erro: %s\n' "$1" >&2
+    printf '[LumaTools] Erro: %s\n' "$1" >&2
     exit 1
 }
 
@@ -139,9 +139,9 @@ join_by() {
 }
 
 print_paths() {
-    local app_dir="${PORTABLE_DIR:-$HOME/.local/share/ACCELA}"
-    local launcher_path="$BIN_DIR/accela"
-    local desktop_path="$APPS_DIR/accela.desktop"
+    local app_dir="${PORTABLE_DIR:-$HOME/.local/share/LumaTools}"
+    local launcher_path="$BIN_DIR/lumatools"
+    local desktop_path="$APPS_DIR/lumatools.desktop"
 
     if [ "$JSON_OUTPUT" = true ]; then
         APP_DIR_NAME="$app_dir" \
@@ -196,7 +196,7 @@ resolve_app_source() {
         return
     fi
 
-    die "Pacote inválido: não encontrei o diretório ACCELA."
+    die "Pacote inválido: não encontrei o diretório LumaTools."
 }
 
 detect_os() {
@@ -455,7 +455,7 @@ PY
 }
 
 run_self_test() {
-    local app_dir="${DEST_DIR:-$HOME/.local/share/ACCELA}"
+    local app_dir="${DEST_DIR:-$HOME/.local/share/LumaTools}"
     local base_dir="$app_dir/squashfs-root"
     local failures=()
 
@@ -469,14 +469,14 @@ run_self_test() {
         if [ -x "$base_dir/bin/.venv/bin/python" ]; then
             "$base_dir/bin/.venv/bin/python" - <<'PY' >/dev/null 2>&1 || failures+=("Dependências Python principais falharam")
 import importlib
-for module in ("PyQt6", "requests", "bs4", "cachetools"):
+for module in ("PyQt6", "requests", "bs4", "cachetools", "httpx", "ruamel.yaml"):
     importlib.import_module(module)
 PY
         else
             failures+=(".venv ausente")
         fi
-        if need_cmd desktop-file-validate && [ -f "$APPS_DIR/accela.desktop" ]; then
-            desktop-file-validate "$APPS_DIR/accela.desktop" >/dev/null 2>&1 || failures+=(".desktop inválido")
+        if need_cmd desktop-file-validate && [ -f "$APPS_DIR/lumatools.desktop" ]; then
+            desktop-file-validate "$APPS_DIR/lumatools.desktop" >/dev/null 2>&1 || failures+=(".desktop inválido")
         fi
     fi
 
@@ -499,18 +499,18 @@ run_doctor() {
 }
 
 show_dry_run_plan() {
-    printf 'Dry-run ACCELA\n'
+    printf 'Dry-run LumaTools\n'
     printf 'Modo: %s\n' "$MODE"
     printf 'Origem: %s\n' "$APP_SOURCE"
     printf 'Destino: %s\n' "$DEST_DIR"
     printf 'Criaria/atualizaria:\n'
     printf ' - %s\n' "$DEST_DIR"
     if [ "$MODE" != "portable" ]; then
-        printf ' - %s/accela\n' "$BIN_DIR"
-        printf ' - %s/accela.desktop\n' "$APPS_DIR"
-        printf ' - %s/accela.png\n' "$ICON_DIR"
+        printf ' - %s/lumatools\n' "$BIN_DIR"
+        printf ' - %s/lumatools.desktop\n' "$APPS_DIR"
+        printf ' - %s/lumatools.png\n' "$ICON_DIR"
     else
-        printf ' - %s/accela-portable\n' "$DEST_DIR"
+        printf ' - %s/lumatools-portable\n' "$DEST_DIR"
     fi
     printf ' - %s\n' "$CACHE_DIR"
     printf ' - %s\n' "$STATE_DIR"
@@ -596,10 +596,10 @@ resolve_dest_dir() {
         if [ -n "$PORTABLE_DIR" ]; then
             DEST_DIR="$PORTABLE_DIR"
         else
-            DEST_DIR="$HOME/Applications/ACCELA-Portable"
+            DEST_DIR="$HOME/Applications/LumaTools-Portable"
         fi
     else
-        DEST_DIR="$HOME/.local/share/ACCELA"
+        DEST_DIR="$HOME/.local/share/LumaTools"
     fi
 }
 
@@ -608,12 +608,12 @@ write_runtime_wrapper() {
         return
     fi
 
-    cat > "$DEST_DIR/ACCELA.AppImage" <<'SH'
+    cat > "$DEST_DIR/LumaTools.AppImage" <<'SH'
 #!/usr/bin/env bash
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec -a accela "$HERE/squashfs-root/AppRun" "$@"
+exec -a lumatools "$HERE/squashfs-root/AppRun" "$@"
 SH
-    chmod +x "$DEST_DIR/ACCELA.AppImage"
+    chmod +x "$DEST_DIR/LumaTools.AppImage"
 }
 
 create_backup() {
@@ -786,6 +786,7 @@ install_system_packages() {
                 git
                 p7zip
                 unzip
+                unrar
                 rsync
                 xdg-utils
                 libnotify
@@ -805,6 +806,7 @@ install_system_packages() {
                 wget
                 git
                 p7zip-full
+                unrar-free
                 unzip
                 rsync
                 xdg-utils
@@ -823,6 +825,7 @@ install_system_packages() {
                 git
                 p7zip
                 p7zip-plugins
+                unrar
                 unzip
                 rsync
                 xdg-utils
@@ -971,12 +974,12 @@ install_slssteam() {
         curl -fsSL \
             "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest" \
             -H "Accept: application/vnd.github+json" \
-            -H "User-Agent: ACCELA" \
+            -H "User-Agent: LumaTools" \
             -o "$release_json"
     elif need_cmd wget; then
         wget -qO "$release_json" \
             --header="Accept: application/vnd.github+json" \
-            --header="User-Agent: ACCELA" \
+            --header="User-Agent: LumaTools" \
             "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest"
     else
         die "Nem curl nem wget estão disponíveis para baixar o SLSsteam."
@@ -1045,12 +1048,12 @@ PY
 
 install_launchers() {
     if [ "$MODE" = "portable" ]; then
-        cat > "$DEST_DIR/accela-portable" <<'SH'
+        cat > "$DEST_DIR/lumatools-portable" <<'SH'
 #!/usr/bin/env bash
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec -a accela "$HERE/squashfs-root/AppRun" "$@"
+exec -a lumatools "$HERE/squashfs-root/AppRun" "$@"
 SH
-        chmod +x "$DEST_DIR/accela-portable"
+        chmod +x "$DEST_DIR/lumatools-portable"
         return
     fi
 
@@ -1062,11 +1065,11 @@ SH
     log "Instalando launchers..."
     mkdir -p "$BIN_DIR"
 
-    cat > "$BIN_DIR/accela" <<'SH'
+    cat > "$BIN_DIR/lumatools" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="$HOME/.local/share/ACCELA"
+APP_DIR="$HOME/.local/share/LumaTools"
 INSTALLER="$APP_DIR/install.sh"
 APP_RUN="$APP_DIR/squashfs-root/AppRun"
 
@@ -1079,9 +1082,9 @@ case "${1:-}" in
         ;;
 esac
 
-exec -a accela "$APP_RUN" "$@"
+exec -a lumatools "$APP_RUN" "$@"
 SH
-    chmod +x "$BIN_DIR/accela"
+    chmod +x "$BIN_DIR/lumatools"
 
     python3 - "$BIN_DIR" <<'PY'
 import itertools
@@ -1089,8 +1092,8 @@ import pathlib
 import sys
 
 bin_dir = pathlib.Path(sys.argv[1])
-target = bin_dir / "accela"
-name = "accela"
+target = bin_dir / "lumatools"
+name = "lumatools"
 for bits in itertools.product((0, 1), repeat=len(name)):
     variant = "".join(
         char.upper() if bit else char.lower()
@@ -1103,7 +1106,7 @@ for bits in itertools.product((0, 1), repeat=len(name)):
         path.unlink()
     path.symlink_to(target.name)
 
-portable_name = bin_dir / "accela-linux"
+portable_name = bin_dir / "lumatools-linux"
 if portable_name.exists() or portable_name.is_symlink():
     portable_name.unlink()
 portable_name.symlink_to(target.name)
@@ -1123,30 +1126,30 @@ install_desktop_entry() {
     log "Instalando atalhos..."
     mkdir -p "$APPS_DIR" "$ICON_DIR"
 
-    if [ -L "$APPS_DIR/accela.desktop" ]; then
-        rm -f "$APPS_DIR/accela.desktop"
+    if [ -L "$APPS_DIR/lumatools.desktop" ]; then
+        rm -f "$APPS_DIR/lumatools.desktop"
     fi
 
     install -Dm644 \
         "$DEST_DIR/squashfs-root/bin/src/res/logo/icon.png" \
-        "$ICON_DIR/accela.png"
+        "$ICON_DIR/lumatools.png"
 
-    cat > "$APPS_DIR/accela.desktop.tmp" <<EOF
+    cat > "$APPS_DIR/lumatools.desktop.tmp" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=ACCELA
-Comment=Launcher ACCELA universal para Linux
-Exec=$BIN_DIR/accela
-Icon=accela
+Name=LumaTools
+Comment=Launcher LumaTools universal para Linux
+Exec=$BIN_DIR/lumatools
+Icon=lumatools
 Terminal=false
 Categories=Game;
 StartupNotify=true
-StartupWMClass=accela
+StartupWMClass=lumatools
 X-GNOME-SingleWindow=true
-MimeType=x-scheme-handler/accela;
+MimeType=x-scheme-handler/lumatools;
 EOF
-    mv "$APPS_DIR/accela.desktop.tmp" "$APPS_DIR/accela.desktop"
+    mv "$APPS_DIR/lumatools.desktop.tmp" "$APPS_DIR/lumatools.desktop"
 
     if need_cmd update-desktop-database; then
         update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
@@ -1217,10 +1220,10 @@ main() {
 
     if [ "$MODE" = "portable" ]; then
         log "Instalação portátil concluída em $DEST_DIR."
-        log "Abra com: $DEST_DIR/accela-portable"
+        log "Abra com: $DEST_DIR/lumatools-portable"
     else
         log "Instalação concluída."
-        log "Abra com: accela"
+        log "Abra com: lumatools"
     fi
 }
 
