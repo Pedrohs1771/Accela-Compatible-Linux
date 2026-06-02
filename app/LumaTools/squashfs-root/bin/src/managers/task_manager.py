@@ -1946,6 +1946,15 @@ class TaskManager(QObject):
             logger.error(f"Failed during cancel cleanup: {e}")
 
     def download_slssteam(self, steam_path=None):
+        if sys.platform != "linux":
+            logger.info("Ignoring SLSsteam installation request outside Linux.")
+            QMessageBox.information(
+                self.main_window,
+                "SLSsteam indisponível",
+                "O SLSsteam é uma integração Linux. No Windows, o LumaTools usa o fluxo nativo da plataforma.",
+            )
+            return
+
         if (
             self.slssteam_download_task is not None
             and self.slssteam_download_runner is not None

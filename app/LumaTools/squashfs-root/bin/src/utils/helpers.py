@@ -351,8 +351,25 @@ def resource_path(relative_path: str) -> Path:
     return Path(os.path.join(base_path, relative_path))
 
 
+def get_install_root() -> Path:
+    """Return the directory that contains the runnable application bundle."""
+    if getattr(sys, "frozen", False):
+        if sys.platform == "win32":
+            return Path(sys.executable).resolve().parent
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass).resolve()
+
+    current_file = Path(__file__).resolve()
+    for parent in current_file.parents:
+        if (parent / "AppRun").exists() and (parent / "lumatools.desktop").exists():
+            return parent
+
+    return Path(os.path.dirname(os.path.abspath(sys.argv[0]))).resolve()
+
+
 def get_base_path(app_name: str = "LumaTools") -> Path:
-    """Return the base directory for the current platform (no logs dir)."""
+    """Return the writable user data directory for the current platform."""
     system = platform.system().lower()
 
     if system == "linux":
@@ -397,6 +414,38 @@ def get_base_path(app_name: str = "LumaTools") -> Path:
     else:
         # Fallback directory for unknown platforms
         return Path.home() / ".logs" / app_name
+
+
+def get_windows_program_root(app_name: str = "LumaTools") -> Path:
+    local_app_data = os.environ.get(
+        "LOCALAPPDATA", os.path.expandvars("%LocalAppData%")
+    )
+    return Path(local_app_data) / "Programs" / app_name
+
+
+def get_windows_startup_dir() -> Path:
+    appdata = os.environ.get("APPDATA", os.path.expandvars("%AppData%"))
+    return (
+        Path(appdata)
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
+    )
+
+
+def get_windows_launcher_target() -> Path:
+    install_root = get_install_root()
+    candidates = [
+        install_root / "Launch-LumaTools.cmd",
+        install_root / "LumaTools.exe",
+        Path(sys.executable),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return Path(sys.executable)
 
 
 def _get_slscheevo_path() -> Path:

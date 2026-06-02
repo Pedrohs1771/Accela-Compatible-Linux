@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.dialogs.dialog_helpers import create_standard_buttons
-from utils.helpers import create_checkbox_setting, get_base_path
+from utils.helpers import create_checkbox_setting, get_install_root
 from utils.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -169,16 +169,17 @@ class UpdateCenterDialog(QDialog):
         advanced_layout = QVBoxLayout(self.advanced_updates_container)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
         advanced_layout.setSpacing(8)
-        advanced_layout.addWidget(QLabel("Repositório"))
+        advanced_layout.addWidget(QLabel("Canal oficial do Luma Tools"))
         self.github_repo_input = QLineEdit()
+        repo_value = self.settings.value(
+            "github_updates_repo",
+            "Pedrohs1771/LumaTools-Linux",
+            type=str,
+        ).strip()
         self.github_repo_input.setText(
-            self.settings.value(
-                "github_updates_repo",
-                "Pedrohs1771/Accela-Compatible-Linux",
-                type=str,
-            )
+            "" if repo_value == "Pedrohs1771/LumaTools-Linux" else repo_value
         )
-        self.github_repo_input.setPlaceholderText("usuario/repositorio")
+        self.github_repo_input.setPlaceholderText("Canal oficial")
         advanced_layout.addWidget(self.github_repo_input)
         self.advanced_updates_container.setVisible(False)
         updates_layout.addWidget(self.advanced_updates_container)
@@ -291,7 +292,7 @@ class UpdateCenterDialog(QDialog):
         if self.update_environment_label is None:
             return
 
-        install_script = get_base_path() / "install.sh"
+        install_script = get_install_root() / "install.sh"
         if not install_script.exists():
             self.update_environment_label.setText(
                 "Sistema: diagnóstico local indisponível até a próxima reinstalação."
@@ -337,7 +338,7 @@ class UpdateCenterDialog(QDialog):
             "github_updates_repo",
             (
                 self.github_repo_input.text().strip().replace(" ", "")
-                or "Pedrohs1771/Accela-Compatible-Linux"
+                or "Pedrohs1771/LumaTools-Linux"
             ),
         )
         self.settings.setValue(

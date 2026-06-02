@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from utils.helpers import get_install_root, get_windows_startup_dir
 
 try:
     import psutil
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class SystemIntegrationManager(QObject):
-    """Manage Linux desktop integration and Steam lifecycle monitoring."""
+    """Manage desktop integration and Steam lifecycle monitoring."""
 
     steam_closed = pyqtSignal()
 
@@ -44,16 +45,12 @@ class SystemIntegrationManager(QObject):
                 )
 
     def apply_autostart_setting(self) -> None:
-        """Create or remove the desktop autostart entry."""
-        if os.name != "posix":
-            return
-
         enabled = self.settings.value("autostart_on_login", False, type=bool)
         autostart_path = self.get_autostart_path()
 
         if enabled:
             autostart_path.parent.mkdir(parents=True, exist_ok=True)
-            autostart_path.write_text(self._build_autostart_desktop_entry(), encoding="utf-8")
+            autostart_path.write_text(self._build_autostart_entry(), encoding="utf-8")
             logger.info("Autostart desktop entry updated at %s", autostart_path)
         elif autostart_path.exists():
             autostart_path.unlink()
@@ -61,20 +58,32 @@ class SystemIntegrationManager(QObject):
 
     @staticmethod
     def get_autostart_path() -> Path:
+        if os.name == "nt":
+            return get_windows_startup_dir() / "LumaTools.cmd"
         return Path.home() / ".config" / "autostart" / "lumatools.desktop"
 
-    def _build_autostart_desktop_entry(self) -> str:
-        launcher_path = Path.home() / ".local" / "bin" / "lumatools"
-        if not launcher_path.exists():
-            launcher_path = Path.home() / ".local" / "share" / "LumaTools" / "LumaTools.AppImage"
-
+    def _build_autostart_entry(self) -> str:
         start_hidden = self.settings.value(
             "start_minimized_to_tray", True, type=bool
         )
+        if os.name == "nt":
+            launcher_path = get_install_root() / "Launch-LumaTools.cmd"
+            if not launcher_path.exists():
+                launcher_path = get_install_root() / "LumaTools.exe"
+            exec_line = f'"{launcher_path}"'
+            if start_hidden:
+                exec_line += " --start-hidden"
+            return f"@echo off\r\nstart \"LumaTools\" {exec_line}\r\n"
+
+        launcher_path = Path.home() / ".local" / "bin" / "lumatools"
+        if not launcher_path.exists():
+            launcher_path = (
+                Path.home() / ".local" / "share" / "LumaTools" / "LumaTools.AppImage"
+            )
+
         exec_line = str(launcher_path)
         if start_hidden:
             exec_line += " --start-hidden"
-
         return (
             "[Desktop Entry]\n"
             "Type=Application\n"

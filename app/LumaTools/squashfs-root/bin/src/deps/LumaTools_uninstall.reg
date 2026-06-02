@@ -1,0 +1,12 @@
+Windows Registry Editor Version 5.00
+
+; Remove LumaTools associations for .zip files and lumatools:// URL protocol
+
+[-HKEY_CLASSES_ROOT\lumatools]
+[-HKEY_CLASSES_ROOT\SystemFileAssociations\.zip\shell\OpenWithLumaTools]
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.zip\OpenWithProgids]
+"Open with LumaTools"=-
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.zip\UserChoice]
+"ProgId"=-

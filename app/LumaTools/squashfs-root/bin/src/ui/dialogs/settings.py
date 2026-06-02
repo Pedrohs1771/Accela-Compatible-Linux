@@ -39,9 +39,11 @@ from utils.helpers import (
     create_font_setting,
     create_slider_setting,
     get_base_path,
+    get_install_root,
     get_slscheevo_path,
     get_slscheevo_save_path,
     get_venv_python,
+    get_windows_launcher_target,
 )
 from utils.paths import Paths
 from utils.settings import get_settings
@@ -527,17 +529,14 @@ class SettingsDialog(QDialog):
         pp_layout.addWidget(self.steamless_checkbox)
 
 
-        if sys.platform == "linux":
-            self.application_shortcuts_checkbox = create_checkbox_setting(
-                "Criar atalhos de aplicativo",
-                "create_application_shortcuts",
-                False,
-                self,
-                "Cria atalhos na área de trabalho e instala ícones do SteamGridDB.",
-            )
-            pp_layout.addWidget(self.application_shortcuts_checkbox)
-        else:
-            self.application_shortcuts_checkbox = None
+        self.application_shortcuts_checkbox = create_checkbox_setting(
+            "Criar atalhos de aplicativo",
+            "create_application_shortcuts",
+            False,
+            self,
+            "Cria atalhos na área de trabalho e instala ícones do SteamGridDB.",
+        )
+        pp_layout.addWidget(self.application_shortcuts_checkbox)
 
         pp_group.setLayout(pp_layout)
         layout.addWidget(pp_group)
@@ -633,16 +632,13 @@ class SettingsDialog(QDialog):
         )
         key_layout.addLayout(morrenus_layout)
 
-        if sys.platform == "linux":
-            sgdb_layout, self.sgdb_api_key_input = self._create_api_key_setting(
-                "Chave da API SteamGridDB:",
-                "Cole sua chave da API SteamGridDB",
-                "sgdb_api_key",
-                help_url="https://www.steamgriddb.com/profile/account",
-            )
-            key_layout.addLayout(sgdb_layout)
-        else:
-            self.sgdb_api_key_input = None
+        sgdb_layout, self.sgdb_api_key_input = self._create_api_key_setting(
+            "Chave da API SteamGridDB:",
+            "Cole sua chave da API SteamGridDB",
+            "sgdb_api_key",
+            help_url="https://www.steamgriddb.com/profile/account",
+        )
+        key_layout.addLayout(sgdb_layout)
 
         key_group.setLayout(key_layout)
         layout.addWidget(key_group)
@@ -733,28 +729,26 @@ class SettingsDialog(QDialog):
         )
         settings_layout.addWidget(self.prompt_steam_restart_checkbox)
 
-        # Advanced Bypasses (Linux Only)
-        if sys.platform == "linux":
-            bypass_label = QLabel("Bypasses Avançados (Linux):")
-            bypass_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-            settings_layout.addWidget(bypass_label)
+        bypass_label = QLabel("Bypasses Avançados:")
+        bypass_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        settings_layout.addWidget(bypass_label)
 
-            settings_layout.addWidget(create_checkbox_setting(
-                "Desbloquear todas as DLCs", "unlock_all_dlcs", True, self,
-                "Força o desbloqueio de todas as DLCs para os jogos instalados."
-            ))
-            settings_layout.addWidget(create_checkbox_setting(
-                "Bypass de Propriedade", "bypass_ownership", True, self,
-                "Simula a propriedade do jogo na Steam."
-            ))
-            settings_layout.addWidget(create_checkbox_setting(
-                "Bypass de Compartilhamento Familiar", "family_sharing_bypass", True, self,
-                "Permite jogar jogos compartilhados sem restrições."
-            ))
-            settings_layout.addWidget(create_checkbox_setting(
-                "Habilitar Módulo de Workshop", "workshop_module_enabled", True, self,
-                "Habilita o download de itens do Workshop diretamente pelo LumaTools."
-            ))
+        settings_layout.addWidget(create_checkbox_setting(
+            "Desbloquear todas as DLCs", "unlock_all_dlcs", True, self,
+            "Força o desbloqueio de todas as DLCs para os jogos instalados."
+        ))
+        settings_layout.addWidget(create_checkbox_setting(
+            "Bypass de Propriedade", "bypass_ownership", True, self,
+            "Simula a propriedade do jogo na Steam."
+        ))
+        settings_layout.addWidget(create_checkbox_setting(
+            "Bypass de Compartilhamento Familiar", "family_sharing_bypass", True, self,
+            "Permite jogar jogos compartilhados sem restrições."
+        ))
+        settings_layout.addWidget(create_checkbox_setting(
+            "Habilitar Módulo de Workshop", "workshop_module_enabled", True, self,
+            "Habilita o download de itens do Workshop diretamente pelo LumaTools."
+        ))
 
 
         settings_group.setLayout(settings_layout)
@@ -788,15 +782,25 @@ class SettingsDialog(QDialog):
         )
 
         self.download_slssteam_button = QPushButton("Instalar/atualizar SLSsteam")
-        self.download_slssteam_button.setToolTip(
-            "Baixa e instala a release oficial mais recente do SLSsteam."
-        )
-        self.download_slssteam_button.clicked.connect(self.download_slssteam)
+        if sys.platform == "linux":
+            self.download_slssteam_button.setToolTip(
+                "Baixa e instala a release oficial mais recente do SLSsteam."
+            )
+            self.download_slssteam_button.clicked.connect(self.download_slssteam)
+            SettingsDialog._add_tool_explanation(
+                tools_layout,
+                "Instala automaticamente o SLSsteam em ~/.local/share/SLSsteam usando a release oficial.",
+            )
+        else:
+            self.download_slssteam_button.setEnabled(False)
+            self.download_slssteam_button.setToolTip(
+                "O SLSsteam é uma integração específica do Linux."
+            )
+            SettingsDialog._add_tool_explanation(
+                tools_layout,
+                "No Windows, o LumaTools usa o fluxo nativo da plataforma em vez do SLSsteam.",
+            )
         tools_layout.addWidget(self.download_slssteam_button)
-        SettingsDialog._add_tool_explanation(
-            tools_layout,
-            "Instala automaticamente o SLSsteam em ~/.local/share/SLSsteam usando a release oficial.",
-        )
 
         tools_group.setLayout(tools_layout)
         layout.addWidget(tools_group)
@@ -845,11 +849,11 @@ class SettingsDialog(QDialog):
         startup_layout.addWidget(self.start_minimized_checkbox)
 
         self.autostart_checkbox = create_checkbox_setting(
-            "Abrir junto com o Arch Linux",
+            "Abrir junto com o sistema",
             "autostart_on_login",
             False,
             self,
-            "Cria um .desktop em ~/.config/autostart para iniciar o launcher com a sessão.",
+            "Cria uma entrada de inicialização automática apropriada para o sistema atual.",
         )
         startup_layout.addWidget(self.autostart_checkbox)
 
@@ -1088,16 +1092,17 @@ class SettingsDialog(QDialog):
         self.update_environment_label.setStyleSheet("color: #A6A6A6; font-size: 13px;")
         updates_layout.addWidget(self.update_environment_label)
 
-        updates_layout.addWidget(QLabel("Repositório"))
+        updates_layout.addWidget(QLabel("Canal oficial do Luma Tools"))
         self.github_repo_input = QLineEdit()
+        repo_value = self.settings.value(
+            "github_updates_repo",
+            "Pedrohs1771/LumaTools-Linux",
+            type=str,
+        ).strip()
         self.github_repo_input.setText(
-            self.settings.value(
-                "github_updates_repo",
-                "Pedrohs1771/Accela-Compatible-Linux",
-                type=str,
-            )
+            "" if repo_value == "Pedrohs1771/LumaTools-Linux" else repo_value
         )
-        self.github_repo_input.setPlaceholderText("usuario/repositorio")
+        self.github_repo_input.setPlaceholderText("Canal oficial")
         updates_layout.addWidget(self.github_repo_input)
 
         self.github_updates_checkbox = create_checkbox_setting(
@@ -1223,7 +1228,21 @@ class SettingsDialog(QDialog):
         if self.update_environment_label is None:
             return
 
-        install_script = get_base_path() / "install.sh"
+        if sys.platform == "win32":
+            install_root = get_install_root()
+            launcher = get_windows_launcher_target()
+            python_exe = install_root / ".venv" / "Scripts" / "python.exe"
+            launch_text = launcher.name if launcher.exists() else "indisponível"
+            python_text = python_exe.name if python_exe.exists() else "indisponível"
+            self.update_environment_label.setText(
+                "Sistema detectado: Windows | "
+                f"Instalação: {install_root} | "
+                f"Launcher: {launch_text} | "
+                f"Python: {python_text}"
+            )
+            return
+
+        install_script = get_install_root() / "install.sh"
         if not install_script.exists():
             self.update_environment_label.setText(
                 "Sistema: diagnóstico local indisponível até a próxima reinstalação."
@@ -1732,7 +1751,7 @@ class SettingsDialog(QDialog):
         )
         self.settings.setValue(
             "github_updates_repo",
-            self.github_repo_input.text().strip() or "Pedrohs1771/Accela-Compatible-Linux",
+            self.github_repo_input.text().strip() or "Pedrohs1771/LumaTools-Linux",
         )
         self.settings.setValue(
             "github_signed_updates_only",
@@ -2193,9 +2212,10 @@ class SettingsDialog(QDialog):
 
         try:
             # Process template
+            launcher_target = str(get_windows_launcher_target()).replace("\\", "\\\\")
             with open(reg_path, "r", encoding="utf-8-sig") as f:
                 content = f.read().replace(
-                    "[INSTALL_PATH]", sys.executable.replace("\\", "\\\\")
+                    "[INSTALL_PATH]", launcher_target
                 )
 
             # Write temp file

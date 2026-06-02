@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils
+      - name: Install Python deps
+        run: |
+          python -m venv .qa-venv
+          .qa-venv/bin/pip install --upgrade pip setuptools wheel
+          .qa-venv/bin/pip install -r app/LumaTools/squashfs-root/bin/requirements.txt
+      - name: QA quick
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .qa-venv/bin/python tools/qa_all.py --quick
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: |
+          python -m venv .qa-venv
+          .qa-venv\Scripts\pip.exe install --upgrade pip setuptools wheel
+          .qa-venv\Scripts\pip.exe install -r app/LumaTools/squashfs-root/bin/requirements.txt
+      - name: Run unit tests
+        env:
+          PYTHONPATH: app/LumaTools/squashfs-root/bin/src
+        run: .qa-venv\Scripts\python.exe -m unittest discover -s tests -v
+      - name: Build Windows package
+        run: powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LumaTools-Windows-x64
+          path: dist/LumaTools-Windows-x64.zip

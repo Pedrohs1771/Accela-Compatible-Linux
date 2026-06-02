@@ -1,0 +1,28 @@
+Windows Registry Editor Version 5.00
+
+; =====================================================
+; lumatools:// URL scheme
+; =====================================================
+
+[HKEY_CLASSES_ROOT\lumatools]
+@="URL:LumaTools"
+"URL Protocol"=""
+
+[HKEY_CLASSES_ROOT\lumatools\shell]
+
+[HKEY_CLASSES_ROOT\lumatools\shell\open]
+
+[HKEY_CLASSES_ROOT\lumatools\shell\open\command]
+@="\"[INSTALL_PATH]\" \"%1\""
+
+
+; =====================================================
+; Context menu: Open with LumaTools (ZIP files)
+; =====================================================
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.zip\shell\OpenWithLumaTools]
+@="Open with LumaTools"
+"Icon"="[INSTALL_PATH]"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.zip\shell\OpenWithLumaTools\command]
+@="\"[INSTALL_PATH]\" \"%1\""

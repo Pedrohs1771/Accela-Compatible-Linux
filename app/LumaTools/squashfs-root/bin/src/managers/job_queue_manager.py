@@ -268,29 +268,12 @@ class JobQueueManager(QObject):
                         )
 
                     time.sleep(1)
-
-                    injector_path = os.path.join(steam_path, "DLLInjector.exe")
-                    if os.path.exists(injector_path):
-                        logger.info(
-                            "Windows Wrapper Mode: Launching DLLInjector.exe..."
+                    logger.info("Restarting Steam with native Windows launch flow...")
+                    if steam_helpers.start_steam() != "SUCCESS":
+                        self._show_message_safe(
+                            "Falha na execução",
+                            "Não foi possível reiniciar o Steam no Windows.",
                         )
-                        if not steam_helpers.run_dll_injector(steam_path):
-                            self._show_message_safe(
-                                "Falha no injetor",
-                                f"Não foi possível iniciar o DLLInjector.exe em {steam_path}.",
-                            )
-                    else:
-                        user32_path = os.path.join(steam_path, "user32.dll")
-                        if os.path.exists(user32_path):
-                            logger.info(
-                                "DLLInjector.exe not found, but user32.dll exists. Starting Steam normally..."
-                            )
-                            steam_helpers.start_steam()
-                        else:
-                            self._show_message_safe(
-                                "Injetor não encontrado",
-                                "DLLInjector.exe não foi encontrado na pasta do Steam.",
-                            )
                 else:
                     self._show_message_safe(
                         "Erro",

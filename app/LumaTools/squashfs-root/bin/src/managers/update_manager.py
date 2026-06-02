@@ -3,6 +3,7 @@ import logging
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -13,7 +14,7 @@ import requests
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
-from utils.helpers import get_base_path
+from utils.helpers import get_base_path, get_install_root
 from utils.version import app_version
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class UpdateManager(QObject):
     update_available_changed = pyqtSignal(bool)
     notification_requested = pyqtSignal(str, str)
 
-    DEFAULT_REPO = "Pedrohs1771/Accela-Compatible-Linux"
+    DEFAULT_REPO = "Pedrohs1771/LumaTools-Linux"
     DEFAULT_BRANCH = "main"
     MANIFEST_PATH = "release/latest.json"
     CHECK_CACHE_TTL_SECONDS = 10
@@ -86,7 +87,7 @@ class UpdateManager(QObject):
 
     @classmethod
     def _version_metadata_file(cls) -> Path:
-        return cls._base_path() / "VERSION.json"
+        return cls._install_root() / "VERSION.json"
 
     def get_repo_slug(self) -> str:
         configured = self.settings.value(
@@ -103,7 +104,11 @@ class UpdateManager(QObject):
             "Pedrohs1771/LumaTools_Linux_GOD_Edition_v2",
             "Pedrohs1771/LumaTools",
         }
-        if not normalized or normalized in invalid_aliases:
+        if (
+            not normalized
+            or normalized in invalid_aliases
+            or "accela" in normalized.lower()
+        ):
             self._persist_repo_slug(self.DEFAULT_REPO)
             return self.DEFAULT_REPO
 
@@ -122,20 +127,35 @@ class UpdateManager(QObject):
         return self.settings.value("github_signed_updates_only", True, type=bool)
 
     @staticmethod
-    def _base_path() -> Path:
+    def _data_path() -> Path:
         return get_base_path()
 
     @classmethod
+    def _install_root(cls) -> Path:
+        return get_install_root()
+
+    @classmethod
     def _revision_file(cls) -> Path:
-        return cls._base_path() / ".repo_revision"
+        return cls._install_root() / ".repo_revision"
 
     @classmethod
     def _public_key_path(cls) -> Path:
-        return cls._base_path() / "release" / "signing" / "public.pem"
+        return cls._install_root() / "release" / "signing" / "public.pem"
 
     @classmethod
     def _backups_root(cls) -> Path:
-        return cls._base_path() / "backups"
+        return cls._install_root() / "backups"
+
+    @staticmethod
+    def _is_windows_runtime() -> bool:
+        return sys.platform.startswith("win")
+
+    @classmethod
+    def _platform_keys(cls) -> list[str]:
+        arch = "x64"
+        if cls._is_windows_runtime():
+            return ["windows-x64", "windows", "win32-x64", "win32"]
+        return ["linux-x64", "linux"]
 
     def get_installed_revision(self) -> str:
         revision_file = self._revision_file()
@@ -307,8 +327,20 @@ class UpdateManager(QObject):
 
         script_path, status_dir = self._write_update_script(release)
         try:
+            launch_command = (
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                ]
+                if self._is_windows_runtime()
+                else ["bash", str(script_path)]
+            )
             subprocess.Popen(
-                ["bash", str(script_path)],
+                launch_command,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -330,8 +362,20 @@ class UpdateManager(QObject):
 
         script_path = self._write_rollback_script(backups[0])
         try:
+            launch_command = (
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                ]
+                if self._is_windows_runtime()
+                else ["bash", str(script_path)]
+            )
             subprocess.Popen(
-                ["bash", str(script_path)],
+                launch_command,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -683,6 +727,10 @@ class UpdateManager(QObject):
             return self._fetch_manifest_release(repo, branch_name)
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
+                if self._is_windows_runtime():
+                    raise RuntimeError(
+                        "Nenhum latest.json com pacote Windows foi publicado para este canal."
+                    ) from exc
                 logger.info("No release/latest.json found; falling back to commit zip.")
             else:
                 raise
@@ -690,6 +738,11 @@ class UpdateManager(QObject):
             raise
         except Exception:
             logger.warning("Manifest fetch failed, falling back to commit zip.", exc_info=True)
+
+        if self._is_windows_runtime():
+            raise RuntimeError(
+                "Manifesto sem pacote Windows utilizável. Fallback para ZIP do código-fonte foi bloqueado no Windows."
+            )
 
         try:
             return self._fetch_commit_release(repo, branch_name)
@@ -708,13 +761,39 @@ class UpdateManager(QObject):
                 return self._fetch_commit_release(self.DEFAULT_REPO, branch_name)
             raise
 
+    @classmethod
+    def _select_manifest_payload(cls, manifest: Dict[str, object]) -> Dict[str, object]:
+        platforms = manifest.get("platforms")
+        if not isinstance(platforms, dict):
+            if cls._is_windows_runtime():
+                package_url = str(manifest.get("package_url", "")).lower()
+                display_name = str(manifest.get("display_name", "")).lower()
+                if "windows" not in package_url and "windows" not in display_name:
+                    raise RuntimeError(
+                        "Manifesto atual não publica um pacote Windows dedicado."
+                    )
+            return dict(manifest)
+
+        for key in cls._platform_keys():
+            platform_payload = platforms.get(key)
+            if isinstance(platform_payload, dict):
+                merged = dict(manifest)
+                merged.update(platform_payload)
+                merged["platform_key"] = key
+                return merged
+
+        supported = ", ".join(sorted(str(key) for key in platforms.keys()))
+        raise RuntimeError(
+            f"Manifesto publicado sem pacote compatível com esta plataforma. Disponíveis: {supported or 'nenhum'}."
+        )
+
     def _fetch_manifest_release(self, repo: str, branch_name: str) -> Dict[str, str]:
         manifest_url = (
             f"https://raw.githubusercontent.com/{repo}/{branch_name}/{self.MANIFEST_PATH}"
         )
         response = requests.get(manifest_url, headers=self._github_headers(), timeout=30)
         response.raise_for_status()
-        manifest = response.json()
+        manifest = self._select_manifest_payload(response.json())
 
         package_url = str(manifest.get("package_url", "")).strip()
         if not package_url:
@@ -741,6 +820,7 @@ class UpdateManager(QObject):
             "signature_url": str(manifest.get("signature_url", "")).strip(),
             "html_url": str(manifest.get("html_url", "")).strip(),
             "source": "manifest",
+            "platform_key": str(manifest.get("platform_key", "")).strip(),
         }
 
     def _fetch_commit_release(self, repo: str, branch_name: str) -> Dict[str, str]:
@@ -803,6 +883,11 @@ class UpdateManager(QObject):
             return ""
 
     def _write_update_script(self, release: Dict[str, str]) -> tuple[Path, Path]:
+        if self._is_windows_runtime():
+            return self._write_windows_update_script(release)
+        return self._write_posix_update_script(release)
+
+    def _write_posix_update_script(self, release: Dict[str, str]) -> tuple[Path, Path]:
         temp_dir = Path(tempfile.mkdtemp(prefix="lumatools-update-"))
         script_path = temp_dir / "apply-update.sh"
         status_dir = temp_dir / "status"
@@ -819,7 +904,7 @@ class UpdateManager(QObject):
         )
         require_signature = "true" if self.require_signed_updates() else "false"
         public_key_text = self._load_public_key_text()
-        base_dir = shlex.quote(str(self._base_path()))
+        base_dir = shlex.quote(str(self._install_root()))
         launcher_path = shlex.quote(str(Path.home() / ".local" / "bin" / "lumatools"))
         status_dir_quoted = shlex.quote(str(status_dir))
 
@@ -1008,11 +1093,123 @@ fi
         os.chmod(script_path, 0o755)
         return script_path, status_dir
 
+    def _write_windows_update_script(self, release: Dict[str, str]) -> tuple[Path, Path]:
+        temp_dir = Path(tempfile.mkdtemp(prefix="lumatools-update-win-"))
+        script_path = temp_dir / "apply-update.ps1"
+        status_dir = temp_dir / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+
+        package_url = json.dumps(str(release.get("package_url") or release.get("zip_url") or "").strip())
+        sha256_url = json.dumps(str(release.get("sha256_url", "")).strip())
+        current_pid = os.getpid()
+        base_dir = json.dumps(str(self._install_root()))
+        launcher_candidates = [
+            str(self._install_root() / "Launch-LumaTools.cmd"),
+            str(self._install_root() / "LumaTools.exe"),
+        ]
+        launcher_candidates_json = json.dumps(launcher_candidates)
+        status_dir_json = json.dumps(str(status_dir))
+
+        script = f"""$ErrorActionPreference = 'Stop'
+$workdir = Join-Path $env:TEMP ('lumatools-update-' + [guid]::NewGuid().ToString())
+$archive = Join-Path $workdir 'update.zip'
+$hashFile = Join-Path $workdir 'update.sha256'
+$extractDir = Join-Path $workdir 'extracted'
+$statusDir = {status_dir_json}
+$readyFile = Join-Path $statusDir 'ready'
+$failedFile = Join-Path $statusDir 'failed'
+$errorFile = Join-Path $statusDir 'error.txt'
+$baseDir = {base_dir}
+$launcherCandidates = {launcher_candidates_json} | ConvertFrom-Json
+
+New-Item -ItemType Directory -Force -Path $workdir, $extractDir, $statusDir | Out-Null
+
+function Fail-Update([string]$message) {{
+    Set-Content -Path $errorFile -Value $message -Encoding UTF8
+    New-Item -ItemType File -Force -Path $failedFile | Out-Null
+    throw $message
+}}
+
+function Download-File([string]$url, [string]$target) {{
+    if ([string]::IsNullOrWhiteSpace($url)) {{
+        throw 'URL ausente.'
+    }}
+    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $target
+}}
+
+function Copy-Tree([string]$source, [string]$target) {{
+    if (Test-Path $target) {{
+        Get-ChildItem -Force $target | Remove-Item -Recurse -Force
+    }} else {{
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+    }}
+    Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
+}}
+
+function Resolve-SourceRoot([string]$path) {{
+    if (Test-Path (Join-Path $path 'Launch-LumaTools.cmd')) {{ return $path }}
+    if (Test-Path (Join-Path $path 'LumaTools.exe')) {{ return $path }}
+    $child = Get-ChildItem -Path $path -Directory | Select-Object -First 1
+    if ($child -and (Test-Path (Join-Path $child.FullName 'Launch-LumaTools.cmd') -or Test-Path (Join-Path $child.FullName 'LumaTools.exe'))) {{
+        return $child.FullName
+    }}
+    return $null
+}}
+
+try {{
+    Download-File {package_url} $archive
+    if (-not [string]::IsNullOrWhiteSpace({sha256_url})) {{
+        Download-File {sha256_url} $hashFile
+        $expected = (Get-Content $hashFile -Raw).Trim().Split()[0].ToLowerInvariant()
+        $actual = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
+        if ($expected -ne $actual) {{
+            Fail-Update "SHA256 invalido para o update do Windows."
+        }}
+    }}
+
+    Expand-Archive -Path $archive -DestinationPath $extractDir -Force
+    $sourceRoot = Resolve-SourceRoot $extractDir
+    if (-not $sourceRoot) {{
+        Fail-Update 'Pacote Windows sem launcher utilizavel.'
+    }}
+
+    New-Item -ItemType File -Force -Path $readyFile | Out-Null
+
+    while (Get-Process -Id {current_pid} -ErrorAction SilentlyContinue) {{
+        Start-Sleep -Seconds 1
+    }}
+
+    $backupRoot = Join-Path $baseDir 'backups'
+    New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+    $backupDir = Join-Path $backupRoot ((Get-Date).ToString('yyyyMMdd-HHmmss') + '__preupdate')
+    Copy-Tree $baseDir $backupDir
+    Copy-Tree $sourceRoot $baseDir
+
+    foreach ($candidate in $launcherCandidates) {{
+        if (Test-Path $candidate) {{
+            Start-Process -FilePath $candidate | Out-Null
+            break
+        }}
+    }}
+}} catch {{
+    Set-Content -Path $errorFile -Value $_.Exception.Message -Encoding UTF8
+    New-Item -ItemType File -Force -Path $failedFile | Out-Null
+    exit 1
+}}
+"""
+        script_path.write_text(script, encoding="utf-8")
+        return script_path, status_dir
+
     def _write_rollback_script(self, backup_dir: Path) -> Path:
+        if self._is_windows_runtime():
+            return self._write_windows_rollback_script(backup_dir)
+        return self._write_posix_rollback_script(backup_dir)
+
+    def _write_posix_rollback_script(self, backup_dir: Path) -> Path:
         temp_dir = Path(tempfile.mkdtemp(prefix="lumatools-rollback-"))
         script_path = temp_dir / "apply-rollback.sh"
         current_pid = os.getpid()
-        base_dir = self._base_path()
+        base_dir = self._install_root()
 
         script = f"""#!/usr/bin/env bash
 set -euo pipefail
@@ -1052,8 +1249,46 @@ for child in backup.iterdir():
 PY
 fi
 
-"$HOME/.local/bin/lumatools" >/dev/null 2>&1 &
+        "$HOME/.local/bin/lumatools" >/dev/null 2>&1 &
 """
         script_path.write_text(script, encoding="utf-8")
         os.chmod(script_path, 0o755)
+        return script_path
+
+    def _write_windows_rollback_script(self, backup_dir: Path) -> Path:
+        temp_dir = Path(tempfile.mkdtemp(prefix="lumatools-rollback-win-"))
+        script_path = temp_dir / "apply-rollback.ps1"
+        current_pid = os.getpid()
+        base_dir = self._install_root()
+        launcher_candidates = [
+            str(base_dir / "Launch-LumaTools.cmd"),
+            str(base_dir / "LumaTools.exe"),
+        ]
+        script = f"""$ErrorActionPreference = 'Stop'
+$backupDir = {json.dumps(str(backup_dir))}
+$baseDir = {json.dumps(str(base_dir))}
+$launcherCandidates = {json.dumps(launcher_candidates)} | ConvertFrom-Json
+
+function Copy-Tree([string]$source, [string]$target) {{
+    if (Test-Path $target) {{
+        Get-ChildItem -Force $target | Remove-Item -Recurse -Force
+    }} else {{
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+    }}
+    Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
+}}
+
+while (Get-Process -Id {current_pid} -ErrorAction SilentlyContinue) {{
+    Start-Sleep -Seconds 1
+}}
+
+Copy-Tree $backupDir $baseDir
+foreach ($candidate in $launcherCandidates) {{
+    if (Test-Path $candidate) {{
+        Start-Process -FilePath $candidate | Out-Null
+        break
+    }}
+}}
+"""
+        script_path.write_text(script, encoding="utf-8")
         return script_path

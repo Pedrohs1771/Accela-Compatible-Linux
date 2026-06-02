@@ -271,21 +271,6 @@ def start_steam_with_slssteam(
         return "FAILED"
 
 
-def run_dll_injector(steam_path):
-    if sys.platform != "win32":
-        return False
-    injector_path = os.path.join(steam_path, "DLLInjector.exe")
-    if not os.path.exists(injector_path):
-        return False
-    try:
-        subprocess.Popen(
-            [injector_path], cwd=steam_path, creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        return True
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
 def get_library_index(library_path: str, steam_path: str | None = None) -> int:
     """Get the library index from libraryfolders.vdf for a given library path.
 
