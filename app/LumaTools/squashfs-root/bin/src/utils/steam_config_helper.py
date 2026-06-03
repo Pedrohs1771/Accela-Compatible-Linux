@@ -58,11 +58,30 @@ def _replace_or_insert_launch_options(content, appid, safe_launch_options):
     if not apps_block:
         steam_block = _find_vdf_block(content, "Steam")
         if not steam_block:
+            root_block = _find_vdf_block(content, "UserLocalConfigStore")
             stripped = content.strip()
-            if stripped:
+            if root_block:
+                _root_start, root_end = root_block
+                steam_tree = (
+                    '\n\t"Software"\n'
+                    "\t{\n"
+                    '\t\t"Valve"\n'
+                    "\t\t{\n"
+                    '\t\t\t"Steam"\n'
+                    "\t\t\t{\n"
+                    '\t\t\t\t"apps"\n'
+                    "\t\t\t\t{\n"
+                    "\t\t\t\t}\n"
+                    "\t\t\t}\n"
+                    "\t\t}\n"
+                    "\t}\n"
+                )
+                content = content[:root_end] + steam_tree + content[root_end:]
+            elif stripped:
                 logger.warning("Blocos 'Steam/apps' não encontrados no localconfig.vdf")
                 return content, False
-            content = (
+            else:
+                content = (
                 '"UserLocalConfigStore"\n'
                 "{\n"
                 '\t"Software"\n'
@@ -78,7 +97,7 @@ def _replace_or_insert_launch_options(content, appid, safe_launch_options):
                 "\t\t}\n"
                 "\t}\n"
                 "}\n"
-            )
+                )
         else:
             _steam_start, steam_end = steam_block
             apps_text = '\n\t\t\t\t"apps"\n\t\t\t\t{\n\t\t\t\t}\n'
