@@ -41,20 +41,33 @@ O **LumaTools** é um launcher e gerenciador de biblioteca multiplataforma proje
 ## 📥 Instalação Rápida (One-Liner)
 
 ### Windows (PowerShell)
-Abra o PowerShell como Administrador e cole:
+Abra o PowerShell e cole este comando de uma linha. Ele baixa o pacote beta completo do Windows primeiro e só depois roda o instalador local do Windows:
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/install_windows.ps1 | iex
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $base=Join-Path $env:USERPROFILE 'Downloads\LumaTools-Windows-Install'; Remove-Item $base -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $base | Out-Null; Set-Location $base; Invoke-WebRequest -Uri 'https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7-windows-beta1/LumaTools-Windows-v1.0.7-beta1.zip' -OutFile 'LumaTools-Windows-v1.0.7-beta1.zip'; Expand-Archive -Force 'LumaTools-Windows-v1.0.7-beta1.zip' .; $installer=Get-ChildItem -Path . -Recurse -Filter install_windows.ps1 | Select-Object -First 1; if (-not $installer) { throw 'install_windows.ps1 não encontrado no pacote' }; Set-Location $installer.DirectoryName; powershell -NoProfile -ExecutionPolicy Bypass -File $installer.FullName"
 ```
 
 ### Linux / Steam Deck (Terminal)
 Abra seu terminal favorito e cole este comando de uma linha. Ele baixa o pacote completo primeiro e só depois roda o instalador local:
 ```bash
-bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf LumaTools-Install; mkdir -p LumaTools-Install; cd LumaTools-Install; curl -fL -o LumaTools-Linux-v1.0.7.zip https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip; unzip -q LumaTools-Linux-v1.0.7.zip; bash install.sh --portable --no-prompt'
+bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf LumaTools-Install; mkdir -p LumaTools-Install; cd LumaTools-Install; curl -fL -o LumaTools-Linux-v1.0.7.zip https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip; if command -v unzip >/dev/null 2>&1; then unzip -q LumaTools-Linux-v1.0.7.zip; elif command -v python3 >/dev/null 2>&1; then python3 -m zipfile -e LumaTools-Linux-v1.0.7.zip .; else echo "Instale unzip ou python3 e rode novamente."; exit 1; fi; bash install.sh --portable --no-prompt'
 ```
 
 Alternativa usando `git`:
 ```bash
 bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf Luma-Tools; git clone --depth=1 https://github.com/Pedrohs1771/Luma-Tools.git; cd Luma-Tools; bash install.sh --portable --no-prompt'
+```
+
+### Assets da Release
+
+Linux estável:
+```text
+LumaTools-Linux-v1.0.7.zip
+```
+
+Windows beta:
+```text
+LumaTools-Windows-v1.0.7-beta1.zip
+LumaTools-Windows-Port-Complete-v1.0.7-beta1.zip
 ```
 
 ---
