@@ -24,7 +24,7 @@ def run(cmd: list[str], cwd: Path | None = None) -> None:
 
 def ensure_windows() -> None:
     if os.name != "nt":
-        raise SystemExit("build_windows.py deve ser executado no Windows.")
+        raise SystemExit("Use --include-venv apenas no Windows.")
 
 
 def recreate_dir(path: Path) -> None:
@@ -37,7 +37,7 @@ def copy_tree(source: Path, target: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
 
 
-def build_package(skip_venv: bool = False) -> Path:
+def build_package(include_venv: bool = False) -> Path:
     recreate_dir(PACKAGE_DIR)
     (PACKAGE_DIR / "bin").mkdir(parents=True, exist_ok=True)
 
@@ -52,7 +52,8 @@ def build_package(skip_venv: bool = False) -> Path:
     if release_dir.exists():
         copy_tree(release_dir, PACKAGE_DIR / "release")
 
-    if not skip_venv:
+    if include_venv:
+        ensure_windows()
         run([sys.executable, "-m", "venv", str(PACKAGE_DIR / ".venv")])
         pip = PACKAGE_DIR / ".venv" / "Scripts" / "pip.exe"
         run([str(pip), "install", "--upgrade", "pip", "setuptools", "wheel"])
@@ -69,12 +70,15 @@ def build_package(skip_venv: bool = False) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the Windows LumaTools package")
-    parser.add_argument("--skip-venv", action="store_true")
+    parser.add_argument(
+        "--include-venv",
+        action="store_true",
+        help="Inclui .venv no pacote. Não recomendado para release pública.",
+    )
     args = parser.parse_args()
 
-    ensure_windows()
     DIST_DIR.mkdir(parents=True, exist_ok=True)
-    archive = build_package(skip_venv=args.skip_venv)
+    archive = build_package(include_venv=args.include_venv)
     print(f"Windows package ready: {archive}")
     return 0
 
