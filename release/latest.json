@@ -1,12 +1,25 @@
 {
-  "version": "main-e41b939a",
-  "display_name": "main-e41b939a",
-  "channel": "rolling",
-  "commit_sha": "e41b939ab70c6dda2db165fa8a900cd4bc6ee61a",
-  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/rolling/LumaTools-Universal-latest.zip",
-  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/rolling/LumaTools-Universal-latest.zip.sha256",
-  "signature_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/rolling/LumaTools-Universal-latest.zip.sig",
-  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/rolling",
-  "published_at": "2026-05-30T22:01:41.176420Z",
-  "notes": "Canal rolling do LumaTools com polish final de Rich Presence e updates."
+  "version": "v1.0.7",
+  "display_name": "Luma Tools v1.0.7",
+  "channel": "stable",
+  "commit_sha": "5d242d3d343a2b7c647ef5f618ec596eb12a97b7",
+  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip",
+  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip.sha256",
+  "signature_url": "",
+  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.7",
+  "published_at": "2026-06-02T22:45:00Z",
+  "notes": "Correção de estabilidade para downloads em conexão instável e atualização dos canais oficiais do Luma Tools.",
+  "platforms": {
+    "linux-x64": {
+      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip",
+      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip.sha256",
+      "signature_url": ""
+    },
+    "windows-x64": {
+      "display_name": "Luma Tools Windows v1.0.7 Beta 1",
+      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7-windows-beta1/LumaTools-Windows-v1.0.7-beta1.zip",
+      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7-windows-beta1/LumaTools-Windows-v1.0.7-beta1.zip.sha256",
+      "signature_url": ""
+    }
+  }
 }
