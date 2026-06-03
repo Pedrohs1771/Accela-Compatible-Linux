@@ -25,6 +25,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_DOWNLOADS = 8
+MAX_SAFE_DOWNLOADS = 32
+
 
 class DownloadDepotsTask(QObject):
     """
@@ -352,9 +355,7 @@ class DownloadDepotsTask(QObject):
         dotnet_cmd = dotnet_path
         dll_path = resource_path(os.path.join("deps", "DepotDownloader.dll"))
 
-        # Get max downloads from settings
-        settings = get_settings()
-        max_downloads = settings.value("max_downloads", 20, type=int)
+        max_downloads = self._get_max_downloads()
 
         commands = []
         skipped_depots = []
@@ -413,6 +414,33 @@ class DownloadDepotsTask(QObject):
             )
 
         return commands, skipped_depots, depot_sizes
+
+    @staticmethod
+    def _get_max_downloads() -> int:
+        settings = get_settings()
+        try:
+            raw_value = int(
+                settings.value("max_downloads", DEFAULT_MAX_DOWNLOADS, type=int)
+            )
+        except (TypeError, ValueError):
+            raw_value = DEFAULT_MAX_DOWNLOADS
+
+        if raw_value <= 0:
+            logger.warning(
+                "Invalid max_downloads=%s; using stable default %s.",
+                raw_value,
+                DEFAULT_MAX_DOWNLOADS,
+            )
+            return DEFAULT_MAX_DOWNLOADS
+
+        clamped_value = max(1, min(MAX_SAFE_DOWNLOADS, raw_value))
+        if clamped_value != raw_value:
+            logger.warning(
+                "Clamping max_downloads from %s to %s for download stability.",
+                raw_value,
+                clamped_value,
+            )
+        return clamped_value
 
     def stop(self):
         """Signals the task to stop."""

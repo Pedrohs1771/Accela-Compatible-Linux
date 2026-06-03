@@ -28,7 +28,7 @@ class UpdateManager(QObject):
     update_available_changed = pyqtSignal(bool)
     notification_requested = pyqtSignal(str, str)
 
-    DEFAULT_REPO = "Pedrohs1771/LumaTools-Linux"
+    DEFAULT_REPO = "Pedrohs1771/Luma-Tools"
     DEFAULT_BRANCH = "main"
     MANIFEST_PATH = "release/latest.json"
     CHECK_CACHE_TTL_SECONDS = 10
@@ -99,6 +99,7 @@ class UpdateManager(QObject):
 
         normalized = configured.replace(" ", "")
         invalid_aliases = {
+            "Pedrohs1771/LumaTools-Linux",
             "Pedrohs1771/LumaTools-Compatible-Linux",
             "Pedrohs1771/Luma-Tools-Compatible-Linux",
             "Pedrohs1771/LumaTools_Linux_GOD_Edition_v2",

@@ -173,11 +173,11 @@ class UpdateCenterDialog(QDialog):
         self.github_repo_input = QLineEdit()
         repo_value = self.settings.value(
             "github_updates_repo",
-            "Pedrohs1771/LumaTools-Linux",
+            "Pedrohs1771/Luma-Tools",
             type=str,
         ).strip()
         self.github_repo_input.setText(
-            "" if repo_value == "Pedrohs1771/LumaTools-Linux" else repo_value
+            "" if repo_value == "Pedrohs1771/Luma-Tools" else repo_value
         )
         self.github_repo_input.setPlaceholderText("Canal oficial")
         advanced_layout.addWidget(self.github_repo_input)
@@ -338,7 +338,7 @@ class UpdateCenterDialog(QDialog):
             "github_updates_repo",
             (
                 self.github_repo_input.text().strip().replace(" ", "")
-                or "Pedrohs1771/LumaTools-Linux"
+                or "Pedrohs1771/Luma-Tools"
             ),
         )
         self.settings.setValue(

@@ -52,6 +52,19 @@ Open your favorite terminal and paste:
 curl -sSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/install.sh | bash
 ```
 
+### Release Assets
+
+Linux stable:
+```text
+LumaTools-Linux-v1.0.7.zip
+```
+
+Windows beta:
+```text
+LumaTools-Windows-v1.0.7-beta1.zip
+LumaTools-Windows-Port-Complete-v1.0.7-beta1.zip
+```
+
 ---
 
 ## 🧠 Project Structure

@@ -492,11 +492,15 @@ class SettingsDialog(QDialog):
         # Max Downloads
         max_dl_layout = QHBoxLayout()
         max_dl_label = QLabel("Máximo de downloads simultâneos")
-        max_dl_label.setToolTip("Define o máximo de downloads simultâneos (0-255)")
+        max_dl_label.setToolTip("Define o máximo de downloads simultâneos (1-32)")
 
         self.max_downloads_spinbox = QSpinBox()
-        self.max_downloads_spinbox.setRange(0, 255)
-        current_max = self.settings.value("max_downloads", 255, type=int)
+        self.max_downloads_spinbox.setRange(1, 32)
+        try:
+            current_max = int(self.settings.value("max_downloads", 8, type=int))
+        except (TypeError, ValueError):
+            current_max = 8
+        current_max = max(1, min(32, current_max))
         self.max_downloads_spinbox.setValue(current_max)
 
         max_dl_layout.addWidget(max_dl_label)
@@ -1096,11 +1100,11 @@ class SettingsDialog(QDialog):
         self.github_repo_input = QLineEdit()
         repo_value = self.settings.value(
             "github_updates_repo",
-            "Pedrohs1771/LumaTools-Linux",
+            "Pedrohs1771/Luma-Tools",
             type=str,
         ).strip()
         self.github_repo_input.setText(
-            "" if repo_value == "Pedrohs1771/LumaTools-Linux" else repo_value
+            "" if repo_value == "Pedrohs1771/Luma-Tools" else repo_value
         )
         self.github_repo_input.setPlaceholderText("Canal oficial")
         updates_layout.addWidget(self.github_repo_input)
@@ -1681,10 +1685,10 @@ class SettingsDialog(QDialog):
                 self.application_shortcuts_checkbox.isChecked(),
             )
 
-        val = 255
+        val = 8
         if hasattr(self, "max_downloads_spinbox"):
             try:
-                val = max(0, min(255, int(self.max_downloads_spinbox.value())))
+                val = max(1, min(32, int(self.max_downloads_spinbox.value())))
             except (ValueError, TypeError):
                 pass
         self.settings.setValue("max_downloads", val)
@@ -1751,7 +1755,7 @@ class SettingsDialog(QDialog):
         )
         self.settings.setValue(
             "github_updates_repo",
-            self.github_repo_input.text().strip() or "Pedrohs1771/LumaTools-Linux",
+            self.github_repo_input.text().strip() or "Pedrohs1771/Luma-Tools",
         )
         self.settings.setValue(
             "github_signed_updates_only",

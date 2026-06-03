@@ -27,9 +27,9 @@ class DiscordPresenceManager(QObject):
     DEFAULT_CLIENT_ID_ENV = "LUMATOOLS_DISCORD_CLIENT_ID"
     LEGACY_CLIENT_ID_ENV = "ACCELA_DISCORD_CLIENT_ID"
     OFFICIAL_CLIENT_ID = "1510404860271525958"
-    DEFAULT_REPO_URL = "https://github.com/Pedrohs1771/LumaTools-Linux"
+    DEFAULT_REPO_URL = "https://github.com/Pedrohs1771/Luma-Tools"
     DEFAULT_RELEASES_URL = (
-        "https://github.com/Pedrohs1771/LumaTools-Linux"
+        "https://github.com/Pedrohs1771/Luma-Tools"
     )
     DEFAULT_LARGE_IMAGE = "accela_large"
     DEFAULT_ASSET_TEXT = "Luma Tools - Linux"

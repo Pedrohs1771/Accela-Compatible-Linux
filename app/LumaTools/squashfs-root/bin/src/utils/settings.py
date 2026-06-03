@@ -2,8 +2,9 @@ from PyQt6.QtCore import QSettings
 
 APP_NAME = "LumaTools"
 ORG_NAME = "Tachibana Labs"
-DEFAULT_GITHUB_REPO = "Pedrohs1771/LumaTools-Linux"
+DEFAULT_GITHUB_REPO = "Pedrohs1771/Luma-Tools"
 INVALID_GITHUB_REPOS = {
+    "Pedrohs1771/LumaTools-Linux",
     "Pedrohs1771/LumaTools-Compatible-Linux",
     "Pedrohs1771/Luma-Tools-Compatible-Linux",
     "Pedrohs1771/LumaTools_Linux_GOD_Edition_v2",

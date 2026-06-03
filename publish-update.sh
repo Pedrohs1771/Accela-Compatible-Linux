@@ -5,7 +5,7 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$ROOT_DIR"
 
 MESSAGE="${1:-update}"
-REPO_SLUG="Pedrohs1771/LumaTools-Linux"
+REPO_SLUG="Pedrohs1771/Luma-Tools"
 RELEASE_TAG="rolling"
 DIST_DIR="$ROOT_DIR/dist"
 RELEASE_DIR="$ROOT_DIR/release"
