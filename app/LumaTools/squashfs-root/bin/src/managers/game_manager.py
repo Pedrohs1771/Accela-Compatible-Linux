@@ -17,6 +17,7 @@ from utils.helpers import get_base_path
 from utils.task_runner import TaskRunner
 from utils.yaml_config_manager import (
     get_user_config_path,
+    ensure_slssteam_config,
     add_additional_app,
     remove_additional_app,
     fix_slssteam_config_indentation,
@@ -531,8 +532,8 @@ class GameManager(QObject):
 
         # Get config path
         config_path = get_user_config_path()
-        if not config_path.exists():
-            logger.debug("SLSsteam config.yaml not found, skipping sync")
+        if not ensure_slssteam_config(config_path):
+            logger.debug("SLSsteam config.yaml unavailable, skipping sync")
             return
 
         # Add each game's AppID to AdditionalApps
@@ -560,8 +561,8 @@ class GameManager(QObject):
 
         # Get paths
         config_path = get_user_config_path()
-        if not config_path.exists():
-            logger.debug("SLSsteam config.yaml not found, skipping token sync")
+        if not ensure_slssteam_config(config_path):
+            logger.debug("SLSsteam config.yaml unavailable, skipping token sync")
             return
 
         manifests_dir = Path(get_base_path()) / "morrenus_manifests"

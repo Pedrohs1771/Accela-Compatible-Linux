@@ -147,8 +147,9 @@ def check_desktop_file() -> str:
     validator = shutil.which("desktop-file-validate")
     if not validator:
         return "desktop-file-validate indisponível"
+    desktop_file = ROOT / "app" / "LumaTools" / "squashfs-root" / "lumatools.desktop"
     return ensure_ok(
-        run([validator, str(ROOT / "app" / "LumaTools" / "squashfs-root" / "LumaTools.desktop")]),
+        run([validator, str(desktop_file)]),
         "desktop-file-validate",
     )
 

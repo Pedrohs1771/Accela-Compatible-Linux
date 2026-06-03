@@ -380,6 +380,10 @@ collect_missing_deps() {
         missing_deps+=("p7zip")
     fi
 
+    if ! need_cmd unrar && ! need_cmd rar; then
+        missing_deps+=("unrar")
+    fi
+
     if ! need_cmd rsync; then
         missing_deps+=("rsync")
     fi
@@ -806,7 +810,7 @@ install_system_packages() {
                 wget
                 git
                 p7zip-full
-                unrar-free
+                unrar
                 unzip
                 rsync
                 xdg-utils
@@ -901,6 +905,65 @@ install_system_packages() {
             maybe_sudo emerge --noreplace "${packages[@]}" || warn "emerge falhou; seguindo com o que já existe."
             ;;
     esac
+}
+
+install_slscheevo() {
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: verificaria/instalaria o SLScheevo."
+        return
+    fi
+
+    local target_dir target_bin release_json asset_url tmp_dir archive
+    target_dir="$DEST_DIR/squashfs-root/bin/src/deps/SLScheevo"
+    target_bin="$target_dir/SLScheevo"
+
+    if [ -x "$target_bin" ]; then
+        log "SLScheevo já está instalado."
+        return
+    fi
+
+    tmp_dir="$(mktemp -d)"
+    release_json="$tmp_dir/slscheevo-release.json"
+    archive="$tmp_dir/SLScheevo-Linux.tar.gz"
+
+    log "Baixando SLScheevo oficial..."
+    if need_cmd curl; then
+        curl -fsSL \
+            "https://api.github.com/repos/xamionex/SLScheevo/releases/latest" \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: LumaTools" \
+            -o "$release_json"
+    elif need_cmd wget; then
+        wget -qO "$release_json" \
+            --header="Accept: application/vnd.github+json" \
+            --header="User-Agent: LumaTools" \
+            "https://api.github.com/repos/xamionex/SLScheevo/releases/latest"
+    else
+        warn "Nem curl nem wget disponíveis para baixar SLScheevo."
+        return 1
+    fi
+
+    asset_url="$(python3 - "$release_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    release = json.load(handle)
+
+for asset in release.get("assets", []):
+    if asset.get("name") == "SLScheevo-Linux.tar.gz":
+        print(asset["browser_download_url"])
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+)"
+
+    download_to_file "$asset_url" "$archive"
+    mkdir -p "$target_dir"
+    tar -xzf "$archive" -C "$tmp_dir"
+    install -m 755 "$tmp_dir/SLScheevo-Linux" "$target_bin"
+    log "SLScheevo instalado em $target_bin."
 }
 
 setup_python_env() {
@@ -1162,6 +1225,7 @@ run_installation() {
     sync_tree
     setup_python_env
     install_slssteam || warn "Falha ao instalar SLSsteam automaticamente."
+    install_slscheevo || warn "Falha ao instalar SLScheevo automaticamente."
     install_launchers
     install_desktop_entry
     write_runtime_wrapper

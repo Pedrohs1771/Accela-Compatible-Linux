@@ -11,6 +11,7 @@ from core.steam_api import get_depot_info_from_api
 from core.ini_parser import parse_depots_ini
 from utils.yaml_config_manager import (
     get_user_config_path,
+    ensure_slssteam_config,
     add_app_token,
     is_slssteam_mode_enabled,
 )
@@ -181,8 +182,8 @@ class ProcessZipTask:
                     # Linux: Add token to SLSsteam config.yaml
                     config_path = get_user_config_path()
 
-                    if not config_path.exists():
-                        logger.warning(f"SLSsteam config not found at {config_path}")
+                    if not ensure_slssteam_config(config_path):
+                        logger.warning(f"SLSsteam config not available at {config_path}")
                         return app_token
 
                     success = add_app_token(config_path, app_id, app_token)

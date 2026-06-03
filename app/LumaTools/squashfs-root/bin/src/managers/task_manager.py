@@ -510,6 +510,13 @@ class TaskManager(QObject):
             return
 
         if not self.game_data.get("force_proton"):
+            if self.game_data.get("apply_online_fix"):
+                tool_name = self.game_data.get("proton_tool_name") or "proton_experimental"
+                if apply_steam_compat_tool(appid, tool_name):
+                    logger.info(
+                        f"Steam compatibility forced to '{tool_name}' for Online-Fix AppID {appid}"
+                    )
+                return
             clear_steam_compat_tool(appid)
             return
 
@@ -778,7 +785,7 @@ class TaskManager(QObject):
                 self.current_dest_path,
                 self.game_data,
                 size_on_disk,
-                include_depots=sys.platform == "win32",
+                include_depots=True,
             )
         except OSError as e:
             logger.error(f"Error creating .acf file: {e}")

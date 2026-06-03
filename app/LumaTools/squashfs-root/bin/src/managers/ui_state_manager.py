@@ -2,6 +2,7 @@ import os
 import random
 import logging
 from typing import cast
+from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtGui import QMovie, QFont
 from PyQt6.QtWidgets import (
     QWidget,
@@ -47,6 +48,19 @@ class UIStateManager:
 
         self._initialize_gifs()
         # Gifs are set up later in apply_style_settings()
+
+    def _is_compact_screen(self) -> bool:
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return False
+        geometry = screen.availableGeometry()
+        return geometry.height() <= 800 or geometry.width() <= 1280
+
+    def _apply_movie_size(self, movie: QMovie) -> None:
+        if not movie or not movie.isValid():
+            return
+        if self._is_compact_screen():
+            movie.setScaledSize(QSize(220, 220))
 
     def _initialize_gifs(self):
         """Initialize GIF resources"""
@@ -228,6 +242,7 @@ class UIStateManager:
                 self.main_movie.stop()
 
         self.main_movie = QMovie(str(default_gif_path))
+        self._apply_movie_size(self.main_movie)
         self.main_movie.start()
         self.main_window.drop_zone_gif.setMovie(self.main_movie)
         self.current_movie = self.main_movie
@@ -235,6 +250,7 @@ class UIStateManager:
         if main_gif_path.exists() and not sonic_main_applied:
             self.main_movie.stop()
             self.main_movie = QMovie(str(main_gif_path))
+            self._apply_movie_size(self.main_movie)
             self.main_window.drop_zone_gif.setMovie(self.main_movie)
             self.main_movie.start()
             self.current_movie = self.main_movie
@@ -485,6 +501,7 @@ class UIStateManager:
         # Select and load a random GIF
         self.random_gif_path = random.choice(available_gifs)
         self.download_movie = QMovie(self.random_gif_path)
+        self._apply_movie_size(self.download_movie)
 
         if self.download_movie.isValid():
             self.current_movie = self.download_movie

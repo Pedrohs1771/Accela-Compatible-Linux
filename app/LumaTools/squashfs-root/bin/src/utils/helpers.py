@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import platform
 import shutil
@@ -448,6 +449,68 @@ def get_windows_launcher_target() -> Path:
     return Path(sys.executable)
 
 
+def _download_slscheevo_binary(binary_path: Path) -> bool:
+    """Download SLScheevo when older packages were shipped without it."""
+    if sys.platform == "win32":
+        asset_name = "SLScheevo-Windows.zip"
+        expected_name = "SLScheevo.exe"
+    elif sys.platform.startswith("linux"):
+        asset_name = "SLScheevo-Linux.tar.gz"
+        expected_name = "SLScheevo-Linux"
+    else:
+        return False
+
+    api_url = "https://api.github.com/repos/xamionex/SLScheevo/releases/latest"
+    try:
+        binary_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="lumatools-slscheevo-") as tmp:
+            tmp_dir = Path(tmp)
+            request = urllib.request.Request(
+                api_url,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "LumaTools",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                release = json.loads(response.read().decode("utf-8"))
+
+            asset_url = None
+            for asset in release.get("assets", []):
+                if asset.get("name") == asset_name:
+                    asset_url = asset.get("browser_download_url")
+                    break
+            if not asset_url:
+                logger.warning("SLScheevo asset not found in latest release.")
+                return False
+
+            archive_path = tmp_dir / asset_name
+            logger.info("Downloading SLScheevo from %s", asset_url)
+            archive_request = urllib.request.Request(
+                asset_url,
+                headers={"User-Agent": "LumaTools"},
+            )
+            with urllib.request.urlopen(archive_request, timeout=120) as response:
+                archive_path.write_bytes(response.read())
+
+            extract_dir = tmp_dir / "extract"
+            extract_dir.mkdir()
+            shutil.unpack_archive(str(archive_path), str(extract_dir))
+            source = next(extract_dir.rglob(expected_name), None)
+            if not source or not source.exists():
+                logger.warning("SLScheevo binary not found after extraction.")
+                return False
+
+            shutil.copy2(source, binary_path)
+            if sys.platform != "win32":
+                binary_path.chmod(0o755)
+            logger.info("SLScheevo installed at: %s", binary_path)
+            return True
+    except Exception as exc:
+        logger.warning("Failed to auto-install SLScheevo: %s", exc)
+        return False
+
+
 def _get_slscheevo_path() -> Path:
     """Get path to SLScheevo executable or Python script."""
 
@@ -468,6 +531,9 @@ def _get_slscheevo_path() -> Path:
     if script_path.exists():
         logger.info(f"Using SLScheevo script at: {script_path}")
         return script_path
+
+    if _download_slscheevo_binary(binary_path) and binary_path.exists():
+        return binary_path
 
     logger.error(f"Could not find SLScheevo (tried: {binary_path}, {script_path})")
     # Return binary_path anyway so error handling can deal with it
