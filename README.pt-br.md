@@ -46,10 +46,15 @@ Abra o PowerShell como Administrador e cole:
 iwr -useb https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/install_windows.ps1 | iex
 ```
 
-### Linux (Terminal)
-Abra seu terminal favorito e cole:
+### Linux / Steam Deck (Terminal)
+Abra seu terminal favorito e cole este comando de uma linha. Ele baixa o pacote completo primeiro e só depois roda o instalador local:
 ```bash
-curl -sSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/install.sh | bash
+bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf LumaTools-Install; mkdir -p LumaTools-Install; cd LumaTools-Install; curl -fL -o LumaTools-Linux-v1.0.7.zip https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip; unzip -q LumaTools-Linux-v1.0.7.zip; bash install.sh --portable --no-prompt'
+```
+
+Alternativa usando `git`:
+```bash
+bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf Luma-Tools; git clone --depth=1 https://github.com/Pedrohs1771/Luma-Tools.git; cd Luma-Tools; bash install.sh --portable --no-prompt'
 ```
 
 ---

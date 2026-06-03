@@ -46,10 +46,15 @@ Open PowerShell as Administrator and paste:
 iwr -useb https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/install_windows.ps1 | iex
 ```
 
-### Linux (Terminal)
-Open your favorite terminal and paste:
+### Linux / Steam Deck (Terminal)
+Open your favorite terminal and paste this one-liner. It downloads the full release package first, then runs the local installer:
 ```bash
-curl -sSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/install.sh | bash
+bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf LumaTools-Install; mkdir -p LumaTools-Install; cd LumaTools-Install; curl -fL -o LumaTools-Linux-v1.0.7.zip https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip; unzip -q LumaTools-Linux-v1.0.7.zip; bash install.sh --portable --no-prompt'
+```
+
+Alternative using `git`:
+```bash
+bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf Luma-Tools; git clone --depth=1 https://github.com/Pedrohs1771/Luma-Tools.git; cd Luma-Tools; bash install.sh --portable --no-prompt'
 ```
 
 ### Release Assets
