@@ -4,12 +4,115 @@ import zipfile
 import logging
 import subprocess
 import re
+import tarfile
+import tempfile
 from typing import Optional, List, Tuple
 from utils.steam_manifest import get_game_directory
 
 logger = logging.getLogger("LumaTools.OnlineFixInjector")
 
 class OnlineFixInjector:
+    @staticmethod
+    def _safe_target(base_dir: str, relative_path: str) -> str:
+        base = os.path.realpath(base_dir)
+        target = os.path.realpath(os.path.join(base_dir, relative_path))
+        if target != base and not target.startswith(base + os.sep):
+            raise ValueError(f"Caminho inseguro dentro do arquivo: {relative_path}")
+        return target
+
+    @staticmethod
+    def _copy_extracted_tree(source_dir: str, game_dir: str) -> None:
+        for root, dirs, files in os.walk(source_dir):
+            rel_root = os.path.relpath(root, source_dir)
+            if rel_root == ".":
+                rel_root = ""
+            for directory in dirs:
+                target_dir = OnlineFixInjector._safe_target(
+                    game_dir, os.path.join(rel_root, directory)
+                )
+                os.makedirs(target_dir, exist_ok=True)
+            for filename in files:
+                source_path = os.path.join(root, filename)
+                relative = os.path.join(rel_root, filename)
+                target_path = OnlineFixInjector._safe_target(game_dir, relative)
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                shutil.copy2(source_path, target_path)
+
+    @staticmethod
+    def _run_extractor(command: List[str]) -> Tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            output = (result.stdout or "") + (result.stderr or "")
+            return result.returncode == 0, output.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+
+    @staticmethod
+    def _extract_rar_with_fallback(fix_path: str, game_dir: str, password: str) -> Tuple[bool, str]:
+        extractors = [
+            ("7z", ["7z", "x", f"-p{password}", f"-o{game_dir}", fix_path, "-y"]),
+            ("unrar", ["unrar", "x", "-o+", f"-p{password}", fix_path, game_dir]),
+            ("unar", ["unar", "-force-overwrite", "-password", password, "-output-directory", game_dir, fix_path]),
+            ("bsdtar", ["bsdtar", f"--passphrase={password}", "-xf", fix_path, "-C", game_dir]),
+        ]
+
+        errors = []
+        for name, command in extractors:
+            if not shutil.which(command[0]):
+                errors.append(f"{name}: não instalado")
+                continue
+            logger.info("Tentando extrair Online-Fix com %s", name)
+            ok, output = OnlineFixInjector._run_extractor(command)
+            if ok:
+                return True, name
+            errors.append(f"{name}: {output or 'falhou'}")
+
+        return False, "\n".join(errors)
+
+    @staticmethod
+    def _extract_archive(fix_path: str, game_dir: str) -> Tuple[bool, str]:
+        lower = fix_path.lower()
+        try:
+            with tempfile.TemporaryDirectory(prefix="lumatools-onlinefix-") as tmp_dir:
+                if lower.endswith(".zip"):
+                    with zipfile.ZipFile(fix_path, "r") as zip_ref:
+                        for member in zip_ref.infolist():
+                            OnlineFixInjector._safe_target(tmp_dir, member.filename)
+                        zip_ref.extractall(tmp_dir)
+                    OnlineFixInjector._copy_extracted_tree(tmp_dir, game_dir)
+                    return True, "zip"
+
+                if lower.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz")):
+                    with tarfile.open(fix_path) as tar_ref:
+                        for member in tar_ref.getmembers():
+                            OnlineFixInjector._safe_target(tmp_dir, member.name)
+                        tar_ref.extractall(tmp_dir)
+                    OnlineFixInjector._copy_extracted_tree(tmp_dir, game_dir)
+                    return True, "tar"
+
+                if lower.endswith(".rar"):
+                    ok, details = OnlineFixInjector._extract_rar_with_fallback(
+                        fix_path, tmp_dir, "online-fix.me"
+                    )
+                    if ok:
+                        OnlineFixInjector._copy_extracted_tree(tmp_dir, game_dir)
+                        return True, details
+                    return False, (
+                        "Falha ao extrair RAR do Online-Fix.\n"
+                        "Tente instalar p7zip-full, unrar, unar ou libarchive-tools.\n"
+                        f"Detalhes:\n{details}"
+                    )
+
+            return False, f"Formato de fix não suportado: {fix_path}"
+        except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+            return False, f"Arquivo de fix corrompido/incompleto ou sem permissão: {exc}"
+
     @staticmethod
     def _find_main_executable(game_dir: str, target_executable_name: Optional[str] = None) -> Optional[str]:
         """Tenta encontrar o executável principal do jogo, ou um executável específico se fornecido."""
@@ -93,12 +196,11 @@ class OnlineFixInjector:
 
         found_overrides = []
         try:
-            if fix_path.lower().endswith(".zip"):
-                with zipfile.ZipFile(fix_path, 'r') as zip_ref:
-                    zip_ref.extractall(game_dir)
-            elif fix_path.lower().endswith(".rar"):
-                password = "online-fix.me"
-                subprocess.run(['7z', 'x', f'-p{password}', f"-o{game_dir}", fix_path, '-y'], check=True, capture_output=True)
+            extracted, extractor_info = OnlineFixInjector._extract_archive(fix_path, game_dir)
+            if not extracted:
+                logger.error(extractor_info)
+                return False, [], extractor_info, None
+            logger.info("Online-Fix extraído com: %s", extractor_info)
             
             # Identificar o executável original (antes de qualquer injeção)
             # Para isso, olhamos o que já existia ou o maior .exe que não seja um loader conhecido

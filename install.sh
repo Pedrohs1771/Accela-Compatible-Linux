@@ -25,6 +25,7 @@ DOCTOR=false
 SELF_TEST=false
 PATHS_ONLY=false
 USER_ONLY=false
+FIX_ALL=false
 
 OS_ID=""
 OS_LIKE=""
@@ -55,6 +56,11 @@ while [ "$#" -gt 0 ]; do
             ;;
         --repair)
             MODE="repair"
+            ;;
+        --fix-all)
+            MODE="repair"
+            NO_PROMPT=true
+            FIX_ALL=true
             ;;
         --mode)
             MODE="${2:-}"
@@ -380,8 +386,8 @@ collect_missing_deps() {
         missing_deps+=("p7zip")
     fi
 
-    if ! need_cmd unrar && ! need_cmd rar; then
-        missing_deps+=("unrar")
+    if ! need_cmd unrar && ! need_cmd unar && ! need_cmd bsdtar; then
+        missing_deps+=("unrar/unar/bsdtar")
     fi
 
     if ! need_cmd rsync; then
@@ -791,6 +797,8 @@ install_system_packages() {
                 p7zip
                 unzip
                 unrar
+                unarchiver
+                libarchive
                 rsync
                 xdg-utils
                 libnotify
@@ -810,7 +818,8 @@ install_system_packages() {
                 wget
                 git
                 p7zip-full
-                unrar
+                unar
+                libarchive-tools
                 unzip
                 rsync
                 xdg-utils
@@ -830,6 +839,8 @@ install_system_packages() {
                 p7zip
                 p7zip-plugins
                 unrar
+                unar
+                libarchive
                 unzip
                 rsync
                 xdg-utils
@@ -846,6 +857,8 @@ install_system_packages() {
                 wget
                 git
                 p7zip
+                unar
+                libarchive-tools
                 unzip
                 rsync
                 xdg-utils
@@ -862,6 +875,8 @@ install_system_packages() {
                 net-misc/wget
                 dev-vcs/git
                 app-arch/p7zip
+                app-arch/unrar
+                app-arch/libarchive
                 app-arch/unzip
                 sys-apps/rsync
                 x11-misc/xdg-utils
@@ -1231,6 +1246,10 @@ run_installation() {
     write_runtime_wrapper
     if [ "$MODE" != "portable" ] && [ "$DRY_RUN" != true ]; then
         ensure_local_bin_in_path
+    fi
+
+    if [ "$FIX_ALL" = true ] && [ "$DRY_RUN" != true ]; then
+        run_self_test
     fi
 }
 

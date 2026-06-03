@@ -46,6 +46,7 @@ from ui.dialogs.credits import CreditsDialog
 from ui.dialogs.fetchmanifest import FetchManifestDialog
 from ui.dialogs.gamelibrary import GameLibraryDialog
 from ui.dialogs.lain import LainMinigameDialog
+from ui.dialogs.ryuu_fixes import RyuuFixesDialog
 from ui.dialogs.settings import SettingsDialog
 from ui.dialogs.status import StatusDialog
 from ui.dialogs.update_center import UpdateCenterDialog
@@ -237,6 +238,7 @@ class MainWindow(QMainWindow):
     def open_settings(self): SettingsDialog(self).exec()
     def open_game_library(self): GameLibraryDialog(self).exec()
     def open_fetch_dialog(self): FetchManifestDialog(self).exec()
+    def open_ryuu_fixes(self): RyuuFixesDialog(self).exec()
     def open_status_dialog(self): StatusDialog(self).exec()
     def open_update_center(self): UpdateCenterDialog(self).exec()
     def open_credits_dialog(self): CreditsDialog(self).exec()

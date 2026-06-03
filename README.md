@@ -47,14 +47,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
 ```
 
 ### Linux / Steam Deck (Terminal)
-Open your favorite terminal and paste this one-liner. It downloads the full release package first, then runs the local installer:
+Open your favorite terminal and paste this one-liner. It downloads the newest Linux release package first, then runs the local installer:
 ```bash
-bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf LumaTools-Install; mkdir -p LumaTools-Install; cd LumaTools-Install; curl -fL -o LumaTools-Linux-v1.0.7.zip https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip; if command -v unzip >/dev/null 2>&1; then unzip -q LumaTools-Linux-v1.0.7.zip; elif command -v python3 >/dev/null 2>&1; then python3 -m zipfile -e LumaTools-Linux-v1.0.7.zip .; else echo "Install unzip or python3 and run again."; exit 1; fi; bash install.sh --portable --no-prompt'
+curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash
 ```
 
-Alternative using `git`:
+Alternative using `wget`:
 ```bash
-bash -c 'set -e; base="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}"; mkdir -p "$base"; cd "$base"; rm -rf Luma-Tools; git clone --depth=1 https://github.com/Pedrohs1771/Luma-Tools.git; cd Luma-Tools; bash install.sh --portable --no-prompt'
+wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash
+```
+
+Manual fallback using `git`:
+```bash
+git clone --depth=1 https://github.com/Pedrohs1771/Luma-Tools.git
+cd Luma-Tools
+bash install.sh --no-prompt
+```
+
+Repair everything:
+```bash
+bash install.sh --fix-all
 ```
 
 ### Release Assets

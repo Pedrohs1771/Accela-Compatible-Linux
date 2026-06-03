@@ -163,6 +163,11 @@ class BottomTitleBar(QFrame):
         )
         layout.addWidget(self.search_button)
 
+        self.ryuu_button = self._create_svg_button(
+            SEARCH_SVG, getattr(parent, "open_ryuu_fixes", None), "Ryuu Fixes"
+        )
+        layout.addWidget(self.ryuu_button)
+
         self.game_library_button = self._create_svg_button(
             BOOK_SVG, getattr(parent, "open_game_library", None), "Biblioteca"
         )
