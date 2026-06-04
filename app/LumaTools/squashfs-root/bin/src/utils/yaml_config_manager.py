@@ -248,14 +248,30 @@ def get_user_config_path() -> Path:
     mode = detect_linux_steam_mode()
 
     if mode == "flatpak":
-        # Flatpak Steam config path for SLSsteam
-        path = Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / "config" / "slssteam" / "config.yaml"
-        if path.exists():
-            return path
-        # Fallback to standard XDG path inside flatpak sandbox if mapped
-        path = Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".config" / "slssteam" / "config.yaml"
-        if path.exists():
-            return path
+        # Return the Flatpak path even before config.yaml exists. Falling back
+        # to ~/.config/slssteam would write a valid config for the wrong Steam.
+        primary = (
+            Path.home()
+            / ".var"
+            / "app"
+            / "com.valvesoftware.Steam"
+            / "config"
+            / "slssteam"
+            / "config.yaml"
+        )
+        legacy = (
+            Path.home()
+            / ".var"
+            / "app"
+            / "com.valvesoftware.Steam"
+            / ".config"
+            / "slssteam"
+            / "config.yaml"
+        )
+        return legacy if legacy.exists() and not primary.exists() else primary
+
+    if mode == "snap":
+        return Path.home() / "snap" / "steam" / "common" / ".config" / "slssteam" / "config.yaml"
 
     # Native/Standard SLSsteam typically looks for config.yaml in ~/.config/slssteam/
     xdg_config_home_str = os.environ.get("XDG_CONFIG_HOME", "")

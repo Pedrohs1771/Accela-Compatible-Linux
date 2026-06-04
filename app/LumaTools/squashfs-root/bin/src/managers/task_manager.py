@@ -828,11 +828,6 @@ class TaskManager(QObject):
                 self._start_application_shortcuts_step()
                 return
 
-        if self._should_offer_ryuu_fix() and "ryuu_check" not in self._job_steps_completed:
-            self._job_steps_completed.add("ryuu_check")
-            self._start_ryuu_check_step()
-            return
-
         # --- FINISH ---
         logger.info("All post-processing steps complete. Finishing job.")
         self.main_window.job_queue.jobs_completed_count += 1
@@ -842,14 +837,10 @@ class TaskManager(QObject):
         self.job_finished()
 
     def _should_offer_ryuu_fix(self) -> bool:
-        if self.is_cancelling or not self.game_data or not self.current_dest_path:
-            return False
-        if (self.current_job_metadata or {}).get("source") == "ryuu":
-            return False
-        appid = str(self.game_data.get("appid", "")).strip()
-        if not appid.isdigit() or appid == "0":
-            return False
-        return bool(load_ryuu_auth_key())
+        # Ryuu is a manual/optional content source. Keeping it out of the
+        # automatic post-download pipeline prevents duplicate "apply fix"
+        # prompts and avoids running Ryuu over Online-Fix unless the user asks.
+        return False
 
     def _start_ryuu_check_step(self) -> None:
         game_name = self.game_data.get("game_name", "Jogo") if self.game_data else "Jogo"

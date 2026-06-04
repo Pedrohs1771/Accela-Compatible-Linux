@@ -28,6 +28,32 @@ def get_game_directory(dest_path: str, game_data: Dict[str, Any]) -> str:
     )
 
 
+def get_active_steam_owner(steam_root: str | os.PathLike[str] | None) -> str:
+    if not steam_root:
+        return "0"
+    loginusers_path = Path(steam_root) / "config" / "loginusers.vdf"
+    if not loginusers_path.exists():
+        return "0"
+
+    try:
+        content = loginusers_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return "0"
+
+    users: list[tuple[str, str]] = []
+    for match in re.finditer(r'"(?P<steamid>7656\d+)"\s*\{(?P<body>.*?)\n\s*\}', content, re.DOTALL):
+        steamid = match.group("steamid")
+        body = match.group("body")
+        if re.search(r'"MostRecent"\s*"1"', body):
+            return steamid
+        rank = "1" if re.search(r'"AllowAutoLogin"\s*"1"', body) else "2"
+        users.append((rank, steamid))
+
+    if users:
+        return sorted(users)[0][1]
+    return "0"
+
+
 def _get_depot_platform(depot_info: Dict[str, Any]) -> str:
     try:
         platform = (depot_info.get("oslist") or "").lower()
@@ -115,6 +141,7 @@ def build_acf_content(
     selected_depots = game_data.get("selected_depots_list", [])
     all_manifests = game_data.get("manifests", {})
     all_depots = game_data.get("depots", {})
+    last_owner = str(game_data.get("lastowner") or game_data.get("LastOwner") or "0")
 
     platform_config = _build_platform_config(
         selected_depots, all_depots, log_proton, logger
@@ -136,7 +163,7 @@ def build_acf_content(
         f'\t"StateFlags"\t\t"4"\n'
         f'\t"installdir"\t\t"{install_folder_name}"\n'
         f'\t"LastUpdated"\t\t"{int(time.time())}"\n'
-        f'\t"LastOwner"\t\t"0"\n'
+        f'\t"LastOwner"\t\t"{last_owner}"\n'
         f'\t"SizeOnDisk"\t\t"{size_on_disk}"\n'
         f'\t"StagingSize"\t\t"0"\n'
         f'\t"buildid"\t\t"{buildid}"\n'
@@ -172,6 +199,9 @@ def write_acf_file(
         return None
 
     install_folder_name = get_install_folder_name(game_data)
+    game_data = dict(game_data)
+    if not game_data.get("lastowner"):
+        game_data["lastowner"] = get_active_steam_owner(dest_path)
     acf_path = os.path.join(
         dest_path, "steamapps", f"appmanifest_{game_data['appid']}.acf"
     )
@@ -219,6 +249,9 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
             "AutoUpdateBehavior": "1",
             "LastUpdated": str(int(time.time())),
         }
+        last_owner = get_active_steam_owner(dest_path)
+        if last_owner != "0":
+            replacements["LastOwner"] = last_owner
 
         for key, value in replacements.items():
             pattern = rf'("{re.escape(key)}"\s*)"[^"]*"'

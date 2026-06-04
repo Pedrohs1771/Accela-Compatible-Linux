@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from utils.steam_manifest import repair_lumatools_library_manifests
+from utils.steam_manifest import (
+    get_active_steam_owner,
+    repair_lumatools_library_manifests,
+    write_acf_file,
+)
 
 
 class SteamManifestRepairTests(unittest.TestCase):
@@ -21,6 +25,7 @@ class SteamManifestRepairTests(unittest.TestCase):
                 '\t"name"\t\t"Stardew Valley"\n'
                 '\t"StateFlags"\t\t"6"\n'
                 '\t"installdir"\t\t"Stardew Valley"\n'
+                '\t"LastOwner"\t\t"0"\n'
                 '\t"UpdateResult"\t\t"8"\n'
                 '\t"BytesToDownload"\t\t"123"\n'
                 '\t"ScheduledAutoUpdate"\t\t"999"\n'
@@ -59,6 +64,64 @@ class SteamManifestRepairTests(unittest.TestCase):
             self.assertEqual(result["repaired"], [])
             self.assertEqual(result["skipped"], ["123"])
             self.assertIn('"StateFlags"\t\t"6"', manifest.read_text(encoding="utf-8"))
+
+    def test_active_steam_owner_uses_most_recent_login_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            steam_root = Path(tmp)
+            config = steam_root / "config"
+            config.mkdir(parents=True)
+            (config / "loginusers.vdf").write_text(
+                '"users"\n'
+                "{\n"
+                '\t"76561198000000001"\n'
+                "\t{\n"
+                '\t\t"AccountName"\t\t"old"\n'
+                '\t\t"MostRecent"\t\t"0"\n'
+                "\t}\n"
+                '\t"76561198000000002"\n'
+                "\t{\n"
+                '\t\t"AccountName"\t\t"active"\n'
+                '\t\t"MostRecent"\t\t"1"\n'
+                "\t}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(get_active_steam_owner(steam_root), "76561198000000002")
+
+    def test_write_acf_uses_active_steam_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            steam_root = Path(tmp)
+            config = steam_root / "config"
+            config.mkdir(parents=True)
+            (config / "loginusers.vdf").write_text(
+                '"users"\n'
+                "{\n"
+                '\t"76561198000000002"\n'
+                "\t{\n"
+                '\t\t"MostRecent"\t\t"1"\n'
+                "\t}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            acf_path = write_acf_file(
+                str(steam_root),
+                {
+                    "appid": "999",
+                    "game_name": "Owner Test",
+                    "buildid": "1",
+                    "selected_depots_list": [],
+                    "manifests": {},
+                    "depots": {},
+                },
+                0,
+                include_depots=False,
+            )
+
+            self.assertIsNotNone(acf_path)
+            text = Path(acf_path).read_text(encoding="utf-8")
+            self.assertIn('"LastOwner"\t\t"76561198000000002"', text)
 
 
 if __name__ == "__main__":
