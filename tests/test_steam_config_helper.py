@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from utils.steam_config_helper import _merge_launch_options, set_steam_launch_options
+from utils.steam_config_helper import (
+    _merge_launch_options,
+    repair_online_fix_launch_options,
+    set_steam_launch_options,
+)
 
 
 ONLINE_FIX_OPTIONS = (
@@ -75,6 +79,56 @@ class SteamConfigHelperTests(unittest.TestCase):
                 self.assertIn("onlinefix64=n,b", text)
                 self.assertIn("winmm=n,b", text)
                 self.assertNotIn("n;b", text)
+
+            self.assertTrue(set_steam_launch_options(str(steam_root), "1966720", ONLINE_FIX_OPTIONS))
+
+    def test_repairs_online_fix_launch_options_from_game_info(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            steam_root = Path(tmp)
+            library = steam_root
+            game_dir = library / "steamapps" / "common" / "Lethal Company"
+            game_dir.mkdir(parents=True)
+            (game_dir / "LUMA_ONLINE_FIX_INFO.txt").write_text(
+                "Launch Options:\n"
+                + ONLINE_FIX_OPTIONS
+                + "\n\nDLLs: ['onlinefix64']",
+                encoding="utf-8",
+            )
+            (library / "steamapps" / "appmanifest_1966720.acf").write_text(
+                '"AppState"\n'
+                "{\n"
+                '\t"appid"\t\t"1966720"\n'
+                '\t"installdir"\t\t"Lethal Company"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            config_dir = steam_root / "userdata" / "111" / "config"
+            config_dir.mkdir(parents=True)
+            (config_dir / "localconfig.vdf").write_text(
+                '"UserLocalConfigStore"\n'
+                "{\n"
+                '\t"Software"\n'
+                "\t{\n"
+                '\t\t"Valve"\n'
+                "\t\t{\n"
+                '\t\t\t"Steam"\n'
+                "\t\t\t{\n"
+                '\t\t\t\t"apps"\n'
+                "\t\t\t\t{\n"
+                "\t\t\t\t}\n"
+                "\t\t\t}\n"
+                "\t\t}\n"
+                "\t}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result = repair_online_fix_launch_options(str(steam_root), [str(library)])
+
+            self.assertEqual(result["updated"], ["1966720"])
+            text = (config_dir / "localconfig.vdf").read_text(encoding="utf-8")
+            self.assertIn("onlinefix64=n,b", text)
+            self.assertNotIn("n;b", text)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import re
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 
@@ -253,3 +254,84 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
         if logger:
             logger.warning("Falha ao reparar appmanifest %s: %s", acf_path, exc)
         return False
+
+
+_LUMATOOLS_MARKERS = {
+    ".LumaTools",
+    ".DepotDownloader",
+    "LUMA_ONLINE_FIX_INFO.txt",
+    "LUMA_FIX_STACK.json",
+    "LUMA_RYUU_FIX_INFO.txt",
+}
+
+
+def _parse_acf_value(content: str, key: str) -> str:
+    match = re.search(rf'"{re.escape(key)}"\s*"([^"]*)"', content)
+    return match.group(1) if match else ""
+
+
+def _is_lumatools_managed_game(game_dir: Path) -> bool:
+    if not game_dir.is_dir():
+        return False
+    return any((game_dir / marker).exists() for marker in _LUMATOOLS_MARKERS)
+
+
+def repair_lumatools_library_manifests(
+    library_paths: Iterable[str | os.PathLike[str]],
+    logger=None,
+) -> dict[str, Any]:
+    """Repair Steam update state for all LumaTools-managed appmanifests.
+
+    Steam can rewrite appmanifest state while it is running. This helper is
+    meant to run after Steam is closed and before it is restarted, so managed
+    games do not come back as "update required" after a successful install.
+    """
+    repaired: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+    seen: set[str] = set()
+
+    for library_path in library_paths or []:
+        library = Path(library_path).expanduser()
+        steamapps = library / "steamapps"
+        common = steamapps / "common"
+        if not steamapps.is_dir():
+            continue
+
+        for acf_path in sorted(steamapps.glob("appmanifest_*.acf")):
+            appid = acf_path.stem.replace("appmanifest_", "", 1)
+            if not appid or appid in seen:
+                continue
+            seen.add(appid)
+
+            try:
+                content = acf_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError as exc:
+                failed.append(appid)
+                if logger:
+                    logger.warning("Falha ao ler %s: %s", acf_path, exc)
+                continue
+
+            installdir = _parse_acf_value(content, "installdir")
+            if not installdir:
+                skipped.append(appid)
+                continue
+
+            game_dir = common / installdir
+            if not _is_lumatools_managed_game(game_dir):
+                skipped.append(appid)
+                continue
+
+            if repair_installed_app_state(str(library), appid, logger=logger):
+                repaired.append(appid)
+            else:
+                failed.append(appid)
+
+    if logger:
+        logger.info(
+            "Reparo global de manifests LumaTools: %s reparado(s), %s ignorado(s), %s falha(s).",
+            len(repaired),
+            len(skipped),
+            len(failed),
+        )
+    return {"repaired": repaired, "skipped": skipped, "failed": failed}

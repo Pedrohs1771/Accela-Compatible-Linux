@@ -10,6 +10,8 @@ from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, QTimer, QObject, pyqtSignal
 from core import steam_helpers
 from core.tasks.download_slssteam_task import DownloadSLSsteamTask
 from utils.helpers import get_base_path
+from utils.steam_config_helper import repair_online_fix_launch_options
+from utils.steam_manifest import repair_lumatools_library_manifests
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +244,7 @@ class JobQueueManager(QObject):
                 logger.info("Attempting to kill Steam process...")
                 steam_helpers.kill_steam_process()
                 time.sleep(1)
+                self._repair_managed_steam_state()
 
                 result = steam_helpers.start_steam()
 
@@ -311,6 +314,21 @@ class JobQueueManager(QObject):
 
         except Exception as e:
             logger.error(f"Error during Steam restart: {e}")
+
+    def _repair_managed_steam_state(self) -> None:
+        try:
+            libraries = steam_helpers.get_steam_libraries()
+            result = repair_lumatools_library_manifests(libraries, logger=logger)
+            if result.get("repaired"):
+                logger.info(
+                    "Repaired Steam install state before restart for AppIDs: %s",
+                    ", ".join(result["repaired"]),
+                )
+            steam_root = steam_helpers.find_steam_install()
+            if steam_root:
+                repair_online_fix_launch_options(steam_root, libraries)
+        except Exception as exc:
+            logger.warning("Failed to repair managed Steam state before restart: %s", exc, exc_info=True)
 
     def _repair_slssteam(self) -> bool:
         if self._slssteam_repair_on_cooldown():

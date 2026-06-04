@@ -152,54 +152,97 @@ def kill_steam_process():
     _slssteam_so_path_cache = None
     _library_inject_so_path_cache = None
 
-    process_name = "steam.exe" if sys.platform == "win32" else "steam"
-    steam_proc = next(
-        (
-            p
-            for p in psutil.process_iter(["pid", "name"])
-            if (p.info.get("name") or "").lower() == process_name
-        ),
-        None,
-    )
+    if sys.platform == "linux":
+        launch_command = get_steam_launch_command(detect_linux_steam_mode()) or ["steam"]
+        try:
+            subprocess.run(
+                [*launch_command, "-shutdown"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("Steam graceful shutdown command failed", exc_info=True)
 
-    if not steam_proc:
-        logger.warning(f"{process_name} process not found.")
+    target_name = "steam.exe" if sys.platform == "win32" else "steam"
+    steam_processes = []
+
+    def is_steam_process(proc) -> bool:
+        try:
+            name = (proc.info.get("name") or "").lower()
+            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
+            exe = (proc.info.get("exe") or "").lower()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+
+        if sys.platform == "win32":
+            return name == target_name
+
+        if name in {"steam", "steamwebhelper", "steam-runtime-launcher-service"}:
+            return True
+
+        runtime_names = {"bash", "srt-logger", "srt-bwrap", "pv-adverb"}
+        steam_markers = (
+            "/steam/steam.sh",
+            "/steam/ubuntu12_32/",
+            "/steam/ubuntu12_64/",
+            "/steam/steamrt",
+            "steamwebhelper",
+            "steam-runtime-launcher-service",
+        )
+        return name in runtime_names and any(
+            marker in cmdline or marker in exe for marker in steam_markers
+        )
+
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "exe"]):
+        if is_steam_process(proc):
+            steam_processes.append(proc)
+
+    if not steam_processes:
+        logger.warning("%s process not found.", target_name)
         return False
 
     if sys.platform == "linux":
-        pid = steam_proc.pid
-        maps_file = f"/proc/{pid}/maps"
-        try:
-            with open(maps_file, "r") as f:
-                for line in f:
-                    if "SLSsteam.so" in line:
-                        parts = line.split()
-                        if len(parts) > 5 and os.path.exists(parts[-1]):
-                            _slssteam_so_path_cache = parts[-1]
-                            logger.info(
-                                f"Found and cached SLSsteam.so path: {_slssteam_so_path_cache}"
-                            )
-                    elif (
-                        "library-inject.so" in line
-                        or "libSLS-library-inject.so" in line
-                    ):
-                        parts = line.split()
-                        if len(parts) > 5 and os.path.exists(parts[-1]):
-                            _library_inject_so_path_cache = parts[-1]
-                            logger.info(
-                                f"Found and cached library-inject.so path: {_library_inject_so_path_cache}"
-                            )
-        except OSError as e:
-            logger.error(f"Error reading process maps for library paths: {e}")
+        for proc in steam_processes:
+            maps_file = f"/proc/{proc.pid}/maps"
+            try:
+                with open(maps_file, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if "SLSsteam.so" in line:
+                            parts = line.split()
+                            if len(parts) > 5 and os.path.exists(parts[-1]):
+                                _slssteam_so_path_cache = parts[-1]
+                                logger.info("Found and cached SLSsteam.so path: %s", _slssteam_so_path_cache)
+                        elif "library-inject.so" in line or "libSLS-library-inject.so" in line:
+                            parts = line.split()
+                            if len(parts) > 5 and os.path.exists(parts[-1]):
+                                _library_inject_so_path_cache = parts[-1]
+                                logger.info("Found and cached library-inject.so path: %s", _library_inject_so_path_cache)
+            except OSError:
+                continue
 
-    try:
-        steam_proc.kill()
-        steam_proc.wait(timeout=5)
-        logger.info(f"Successfully terminated {process_name} (PID: {steam_proc.pid}).")
-        return True
-    except psutil.Error as e:
-        logger.error(f"Failed to terminate {process_name}: {e}")
-        return False
+    for proc in steam_processes:
+        try:
+            proc.terminate()
+        except psutil.Error:
+            continue
+
+    gone, alive = psutil.wait_procs(steam_processes, timeout=5)
+    for proc in alive:
+        try:
+            proc.kill()
+        except psutil.Error:
+            continue
+    if alive:
+        psutil.wait_procs(alive, timeout=3)
+
+    logger.info(
+        "Terminated Steam process tree: %s graceful, %s forced.",
+        len(gone),
+        len(alive),
+    )
+    return True
 
 
 def start_steam():

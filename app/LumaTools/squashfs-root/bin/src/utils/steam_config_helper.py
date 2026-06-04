@@ -3,6 +3,7 @@ import re
 import logging
 import shutil
 import time
+from pathlib import Path
 
 logger = logging.getLogger("LumaTools.SteamConfigHelper")
 
@@ -226,6 +227,25 @@ def _replace_or_insert_launch_options(content, appid, launch_options):
     return content[:app_start] + new_app_content + content[app_end + 1:], True
 
 
+def _launch_options_already_satisfied(content, appid, launch_options):
+    apps_block = _find_vdf_block(content, "apps")
+    if not apps_block:
+        return False
+    apps_start, apps_end = apps_block
+    app_block = _find_vdf_block(content, appid, apps_start, apps_end)
+    if not app_block:
+        return False
+
+    app_start, app_end = app_block
+    app_content = content[app_start:app_end + 1]
+    match = re.search(r'("LaunchOptions"\s*)"((?:\\.|[^"\\])*)"', app_content)
+    if not match:
+        return False
+
+    existing = _unescape_vdf_value(match.group(2))
+    return _merge_launch_options(existing, launch_options).strip() == existing.strip()
+
+
 def set_steam_launch_options(steam_root, appid, launch_options):
     """
     Define as opções de inicialização no localconfig.vdf da Steam.
@@ -254,8 +274,78 @@ def set_steam_launch_options(steam_root, appid, launch_options):
                         f.write(new_content)
                     success = True
                     logger.info(f"LaunchOptions atualizadas para AppID {appid} no usuário {user_id}")
+                elif _launch_options_already_satisfied(content, appid, launch_options):
+                    success = True
 
             except Exception as e:
                 logger.error(f"Erro ao editar localconfig para usuário {user_id}: {e}")
 
     return success
+
+
+def _extract_online_fix_launch_options(game_dir: Path) -> str:
+    info_path = game_dir / "LUMA_ONLINE_FIX_INFO.txt"
+    if not info_path.exists():
+        return ""
+    try:
+        content = info_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    match = re.search(r"Launch Options:\s*\n([^\n]+)", content)
+    return match.group(1).strip() if match else ""
+
+
+def _parse_acf_value(content: str, key: str) -> str:
+    match = re.search(rf'"{re.escape(key)}"\s*"([^"]*)"', content)
+    return match.group(1) if match else ""
+
+
+def repair_online_fix_launch_options(steam_root, library_paths) -> dict:
+    """Re-apply saved OnlineFix launch options for all managed games.
+
+    This is intentionally idempotent and uses each game's
+    LUMA_ONLINE_FIX_INFO.txt as the source of truth.
+    """
+    result = {"updated": [], "missing": [], "failed": []}
+    if not steam_root or not os.path.exists(steam_root):
+        return result
+
+    seen = set()
+    for library_path in library_paths or []:
+        steamapps = Path(library_path).expanduser() / "steamapps"
+        common = steamapps / "common"
+        if not steamapps.is_dir():
+            continue
+
+        for acf_path in sorted(steamapps.glob("appmanifest_*.acf")):
+            appid = acf_path.stem.replace("appmanifest_", "", 1)
+            if not appid or appid in seen:
+                continue
+            seen.add(appid)
+
+            try:
+                content = acf_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                result["failed"].append(appid)
+                continue
+
+            installdir = _parse_acf_value(content, "installdir")
+            if not installdir:
+                continue
+
+            launch_options = _extract_online_fix_launch_options(common / installdir)
+            if not launch_options:
+                continue
+
+            if set_steam_launch_options(steam_root, appid, launch_options):
+                result["updated"].append(appid)
+            else:
+                result["missing"].append(appid)
+
+    logger.info(
+        "Reparo global de Launch Options OnlineFix: %s atualizado(s), %s sem alteração/usuário, %s falha(s).",
+        len(result["updated"]),
+        len(result["missing"]),
+        len(result["failed"]),
+    )
+    return result
