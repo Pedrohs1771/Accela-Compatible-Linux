@@ -29,7 +29,19 @@ def _unescape_vdf_value(value):
 
 
 def _split_overrides(value):
-    return [item.strip() for item in re.split(r"[;,]", value or "") if item.strip()]
+    overrides = []
+    for item in re.split(r";", value or ""):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            # Repair older malformed values like "onlinefix64=n;b" back into
+            # "onlinefix64=n,b" instead of treating "b" as another override.
+            if overrides and item.lower() in {"b", "n", "native", "builtin"}:
+                overrides[-1] = f"{overrides[-1]},{item}"
+            continue
+        overrides.append(item)
+    return overrides
 
 
 def _merge_launch_options(existing, desired):
@@ -47,13 +59,14 @@ def _merge_launch_options(existing, desired):
         return desired
 
     merged_overrides = []
-    seen = set()
+    positions = {}
     for item in _split_overrides(existing_match.group(1)) + _split_overrides(desired_match.group(1)):
         key = item.split("=", 1)[0].lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        merged_overrides.append(item)
+        if key in positions:
+            merged_overrides[positions[key]] = item
+        else:
+            positions[key] = len(merged_overrides)
+            merged_overrides.append(item)
 
     merged = re.sub(
         wine_pattern,

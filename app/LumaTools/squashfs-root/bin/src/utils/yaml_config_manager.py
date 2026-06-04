@@ -326,11 +326,19 @@ def _remove_matching_entry(
 
 def _fix_additional_apps_indentation(content: str) -> Tuple[str, bool]:
     """Fix indentation of AdditionalApps list items."""
+    original_content = content
+    content = re.sub(
+        r"^(AdditionalApps:)[ \t]+-\s*",
+        r"\1\n  - ",
+        content,
+        flags=re.MULTILINE,
+    )
+
     # Find AdditionalApps section
     additional_apps_pattern = re.compile(r"^AdditionalApps:\s*$", re.MULTILINE)
     section_start = _get_section_start(content, additional_apps_pattern)
     if section_start is None:
-        return content, False
+        return content, content != original_content
 
     # Look for next top-level key
     next_key_pattern = re.compile(r"^[A-Za-z]", re.MULTILINE)
@@ -351,7 +359,7 @@ def _fix_additional_apps_indentation(content: str) -> Tuple[str, bool]:
         logger.debug("Fixed indentation of AdditionalApps list items")
         return fixed_content, True
 
-    return content, False
+    return content, content != original_content
 
 
 def _get_app_tokens_section(content: str) -> str:
@@ -442,6 +450,8 @@ def _append_to_additional_apps(
 ) -> str:
     """Append AppID to existing AdditionalApps section."""
     start_pos = match.end()
+    if start_pos < len(content) and content[start_pos] == "\n":
+        start_pos += 1
     remaining = content[start_pos:]
     lines = remaining.split("\n")
 

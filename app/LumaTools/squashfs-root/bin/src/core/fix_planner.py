@@ -27,11 +27,25 @@ PROTECTED_ONLINE_FIX_FILES = {
     "steam_appid.txt",
 }
 
+ONLINE_FIX_MARKER_FILES = {
+    "LUMA_ONLINE_FIX_INFO.txt",
+    "OnlineFix.ini",
+    "SteamFix.ini",
+    "onlinefix.dll",
+    "onlinefix64.dll",
+    "OnlineFix64.dll",
+    "SteamOverlay64.dll",
+}
+
 
 def has_online_fix(game_dir: str | Path) -> bool:
     root = Path(game_dir)
     if (root / "LUMA_ONLINE_FIX_INFO.txt").exists():
         return True
+
+    for marker in ONLINE_FIX_MARKER_FILES:
+        if (root / marker).exists():
+            return True
 
     stack = _load_fix_stack(root)
     return any(
@@ -48,7 +62,11 @@ def plan_ryuu_fix(game_dir: str | Path, fix_path: str | Path) -> dict[str, Any]:
     conflicted_files = []
 
     for rel in _list_fix_files(source):
-        protected = Path(rel).name.lower() in PROTECTED_ONLINE_FIX_FILES
+        rel_path = Path(rel)
+        protected = (
+            rel_path.name.lower() in PROTECTED_ONLINE_FIX_FILES
+            or rel_path.as_posix().lower() in PROTECTED_ONLINE_FIX_FILES
+        )
         item = {"path": rel, "protected": protected}
         if online_fix_present and protected:
             conflicted_files.append(item)

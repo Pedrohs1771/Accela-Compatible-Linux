@@ -181,7 +181,10 @@ class TaskManager(QObject):
 
     def _should_auto_select_depots(self) -> bool:
         metadata = self.current_job_metadata or {}
-        return bool(metadata.get("auto_select_depots")) and metadata.get("source") == "ryuu"
+        return bool(metadata.get("auto_select_depots")) and metadata.get("source") in {
+            "ryuu",
+            "content_zip",
+        }
 
     def _auto_select_depots_from_job(self) -> None:
         if not self.game_data:
@@ -195,11 +198,36 @@ class TaskManager(QObject):
             return
 
         logger.info(
-            "Ryuu job auto-selected %s depot(s) for %s",
+            "Content job auto-selected %s depot(s) for %s",
             len(selected_depots),
             self.game_data.get("game_name", self.game_data.get("appid", "")),
         )
         self.game_data["selected_depots_list"] = selected_depots
+        metadata = self.current_job_metadata or {}
+        selected_dlc_override = (
+            metadata.get("selected_dlcs")
+            if "selected_dlcs" in metadata
+            else metadata.get("selected_dlcs_override")
+        )
+        if selected_dlc_override is not None:
+            available_dlcs = {str(key) for key in (self.game_data.get("dlcs") or {}).keys()}
+            self.game_data["selected_dlcs"] = [
+                str(dlc_id)
+                for dlc_id in selected_dlc_override
+                if not available_dlcs or str(dlc_id) in available_dlcs
+            ]
+            logger.info(
+                "Content job selected %s requested DLC/AppID item(s) for %s",
+                len(self.game_data["selected_dlcs"]),
+                self.game_data.get("game_name", self.game_data.get("appid", "")),
+            )
+        elif self.game_data.get("dlcs"):
+            self.game_data["selected_dlcs"] = list(self.game_data["dlcs"].keys())
+            logger.info(
+                "Content job auto-selected %s DLC/AppID item(s) for %s",
+                len(self.game_data["selected_dlcs"]),
+                self.game_data.get("game_name", self.game_data.get("appid", "")),
+            )
         self._apply_default_linux_proton_selection(selected_depots)
         self._start_download_with_destination(selected_depots)
 
@@ -1792,9 +1820,10 @@ class TaskManager(QObject):
             selected_dlcs = self.game_data.get("selected_dlcs", [])
             dlcs = self.game_data.get("dlcs", {})
 
-            if main_appid and selected_dlcs and len(selected_dlcs) > 64:
+            if main_appid and selected_dlcs:
                 for dlc_id in selected_dlcs:
                     dlc_name = dlcs.get(dlc_id, "")
+                    add_additional_app(config_path, str(dlc_id), dlc_name)
                     add_dlc_data(config_path, str(main_appid), str(dlc_id), dlc_name)
 
         except OSError as e:

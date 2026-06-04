@@ -21,6 +21,7 @@ from .assets import (
     GEAR_SVG,
     MAXIMIZE,
     MINIMIZE,
+    PACKAGE_SVG,
     PAPERCLIP_SVG,
     POWER_SVG,
     SEARCH_SVG,
@@ -67,6 +68,7 @@ class BottomTitleBar(QFrame):
         self.status_button: Optional[QPushButton] = None
         self.search_button: Optional[QPushButton] = None
         self.ryuu_button: Optional[QPushButton] = None
+        self.content_button: Optional[QPushButton] = None
         self.game_library_button: Optional[QPushButton] = None
         self.settings_button: Optional[QPushButton] = None
         self.update_button: Optional[QPushButton] = None
@@ -171,6 +173,13 @@ class BottomTitleBar(QFrame):
             "Ryuu Fixes",
         )
         layout.addWidget(self.ryuu_button)
+
+        self.content_button = self._create_svg_button(
+            PACKAGE_SVG,
+            getattr(parent, "open_content_manager", None),
+            "Conteudo e Workshop",
+        )
+        layout.addWidget(self.content_button)
 
         self.game_library_button = self._create_svg_button(
             BOOK_SVG, getattr(parent, "open_game_library", None), "Biblioteca"

@@ -42,6 +42,7 @@ from managers.task_manager import TaskManager
 from managers.update_manager import UpdateManager
 from managers.ui_state_manager import UIStateManager
 from ui.bottom_titlebar import BottomTitleBar
+from ui.dialogs.content_manager import ContentManagerDialog
 from ui.dialogs.credits import CreditsDialog
 from ui.dialogs.fetchmanifest import FetchManifestDialog
 from ui.dialogs.gamelibrary import GameLibraryDialog
@@ -244,6 +245,7 @@ class MainWindow(QMainWindow):
     def open_game_library(self): GameLibraryDialog(self).exec()
     def open_fetch_dialog(self): FetchManifestDialog(self).exec()
     def open_ryuu_fixes(self): RyuuFixesDialog(self).exec()
+    def open_content_manager(self): ContentManagerDialog(self).exec()
     def open_status_dialog(self): StatusDialog(self).exec()
     def open_update_center(self): UpdateCenterDialog(self).exec()
     def open_credits_dialog(self): CreditsDialog(self).exec()
