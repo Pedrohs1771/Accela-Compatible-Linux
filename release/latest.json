@@ -1,18 +1,18 @@
 {
-  "version": "v1.0.9",
-  "display_name": "Luma Tools Linux v1.0.9",
+  "version": "v1.0.10",
+  "display_name": "Luma Tools Linux v1.0.10",
   "channel": "stable",
-  "commit_sha": "fb09718110c1cb324fff3dfa7c74d19e0681f001",
-  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip",
-  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip.sha256",
+  "commit_sha": "57bc5ce627be728032ae90424b538b9184ac448b",
+  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.10/LumaTools-Linux-v1.0.10.zip",
+  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.10/LumaTools-Linux-v1.0.10.zip.sha256",
   "signature_url": "",
-  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.9",
-  "published_at": "2026-06-03T21:05:00-03:00",
-  "notes": "Instalação plug and play via bootstrap, Ryuu Fixes nas integrações e fallback robusto de extração para Online-Fix.",
+  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.10",
+  "published_at": "2026-06-04T15:45:00-03:00",
+  "notes": "OnlineFix endurecido para Proton, Ryuu protegido contra conflitos, DLC/Conteúdo e Workshop via SteamCMD.",
   "platforms": {
     "linux-x64": {
-      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip",
-      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip.sha256",
+      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.10/LumaTools-Linux-v1.0.10.zip",
+      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.10/LumaTools-Linux-v1.0.10.zip.sha256",
       "signature_url": ""
     },
     "windows-x64": {
