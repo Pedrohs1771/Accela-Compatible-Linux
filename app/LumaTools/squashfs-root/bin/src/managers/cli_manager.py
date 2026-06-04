@@ -34,6 +34,7 @@ from utils.proton_tools import (
     apply_steam_compat_tool,
     build_default_proton_selection,
     clear_steam_compat_tool,
+    depot_selection_requires_proton,
 )
 from utils.steam_manifest import get_game_directory, repair_installed_app_state, write_acf_file
 from utils.helpers import create_font_from_settings
@@ -295,6 +296,14 @@ def run_cli_mode(
                 selected_depots, game_data.get("depots") or {}
             )
             game_data.update(proton_defaults)
+            if game_data.get("apply_online_fix") and not depot_selection_requires_proton(
+                selected_depots, game_data.get("depots") or {}
+            ):
+                logger.error(
+                    "OnlineFix precisa da versão Windows do jogo rodando via Proton. "
+                    "Selecione um depot Windows ou desmarque OnlineFix."
+                )
+                continue
             if proton_defaults.get("force_proton"):
                 logger.info(
                     "Steam compatibility will be forced to %s for this install",

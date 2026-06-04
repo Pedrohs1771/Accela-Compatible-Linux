@@ -47,14 +47,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
 ```
 
 ### Linux / Steam Deck (Terminal)
-Open your favorite terminal and paste this one-liner. It always resolves the latest Linux release from GitHub Releases, then runs the local installer:
+Open your favorite terminal and paste this one-liner. It always resolves the latest Linux release from GitHub Releases, installs/updates LumaTools, and runs the repair pass for managed Steam appmanifests and SLSsteam entries:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --fix-all
 ```
 
 Alternative using `wget`:
 ```bash
-wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash
+wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --fix-all
 ```
 
 Manual fallback using `git`:
@@ -64,9 +64,9 @@ cd Luma-Tools
 bash install.sh --no-prompt
 ```
 
-Repair everything:
+Repair an existing installation:
 ```bash
-bash install.sh --fix-all
+lumatools --fix-all
 ```
 
 ### Release Assets

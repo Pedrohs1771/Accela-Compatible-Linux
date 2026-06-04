@@ -84,6 +84,7 @@ main() {
     mkdir -p "$WORK_DIR/extract"
 
     local releases_json archive asset_url install_dir
+    local installer_args=("$@")
     releases_json="$WORK_DIR/releases.json"
     archive="$WORK_DIR/LumaTools-Linux.zip"
 
@@ -109,7 +110,11 @@ main() {
     log "Executando instalador..."
     (
         cd "$install_dir"
-        bash install.sh --no-prompt
+        if [ "${#installer_args[@]}" -gt 0 ]; then
+            bash install.sh "${installer_args[@]}"
+        else
+            bash install.sh --no-prompt
+        fi
     )
 
     if command -v lumatools >/dev/null 2>&1; then

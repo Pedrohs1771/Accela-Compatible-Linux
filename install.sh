@@ -508,6 +508,128 @@ run_doctor() {
     run_self_test
 }
 
+repair_existing_lumatools_state() {
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: repararia appmanifests e sincronizaria AdditionalApps do SLSsteam."
+        return
+    fi
+
+    local src_dir py_bin
+    src_dir="$DEST_DIR/squashfs-root/bin/src"
+    py_bin="$DEST_DIR/squashfs-root/bin/.venv/bin/python"
+    if [ ! -x "$py_bin" ]; then
+        py_bin="python3"
+    fi
+
+    if [ ! -d "$src_dir" ]; then
+        warn "Fonte Python instalada não encontrada; pulando repair de Steam."
+        return
+    fi
+
+    log "Reparando estado Steam dos jogos LumaTools..."
+    if ! LUMATOOLS_SRC="$src_dir" "$py_bin" - <<'PY'
+import logging
+import os
+import re
+import sys
+from pathlib import Path
+
+src = os.environ["LUMATOOLS_SRC"]
+sys.path.insert(0, src)
+
+from core import steam_helpers
+from utils.steam_manifest import (
+    _is_lumatools_managed_game,
+    _parse_acf_value,
+    repair_lumatools_library_manifests,
+)
+from utils.yaml_config_manager import (
+    _append_to_additional_apps,
+    _atomic_write,
+    _default_slssteam_config,
+    _fix_additional_apps_indentation,
+    _merge_duplicate_additional_apps,
+    get_user_config_path,
+)
+
+logging.basicConfig(level=logging.INFO, format="[LumaTools repair] %(message)s")
+logger = logging.getLogger("lumatools.repair")
+
+libraries = steam_helpers.get_steam_libraries() or []
+repair_result = repair_lumatools_library_manifests(libraries, logger=logger)
+
+managed_apps: list[tuple[str, str]] = []
+seen: set[str] = set()
+for library in libraries:
+    steamapps = Path(library).expanduser() / "steamapps"
+    common = steamapps / "common"
+    if not steamapps.is_dir():
+        continue
+
+    for acf_path in sorted(steamapps.glob("appmanifest_*.acf")):
+        appid = acf_path.stem.replace("appmanifest_", "", 1)
+        if not appid or appid in seen:
+            continue
+        try:
+            content = acf_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        installdir = _parse_acf_value(content, "installdir")
+        if not installdir:
+            continue
+
+        game_dir = common / installdir
+        if not _is_lumatools_managed_game(game_dir):
+            continue
+
+        name = _parse_acf_value(content, "name") or installdir
+        managed_apps.append((appid, name))
+        seen.add(appid)
+
+synced = 0
+if managed_apps:
+    config_path = get_user_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if config_path.exists():
+        content = config_path.read_text(encoding="utf-8", errors="ignore")
+    else:
+        content = _default_slssteam_config()
+
+    content, _ = _fix_additional_apps_indentation(content)
+    content, _ = _merge_duplicate_additional_apps(content)
+    if not re.search(r"^AdditionalApps:\s*$", content, re.MULTILINE):
+        content += "\nAdditionalApps:\n"
+
+    for appid, name in managed_apps:
+        match = re.search(r"^AdditionalApps:\s*$", content, re.MULTILINE)
+        section_start = match.end() if match else len(content)
+        next_key = re.compile(r"^[A-Za-z]", re.MULTILINE)
+        next_match = next_key.search(content, section_start)
+        section_end = next_match.start() if next_match else len(content)
+        section = content[section_start:section_end]
+        if re.search(rf"^\s*-\s*{re.escape(appid)}\b", section, re.MULTILINE):
+            continue
+        content = _append_to_additional_apps(content, appid, name, match)
+        synced += 1
+
+    if synced:
+        _atomic_write(config_path, content)
+
+print(
+    "FIX_ALL_REPAIRED={repaired} FIX_ALL_FAILED={failed} ADDITIONAL_APPS_SYNCED={synced}".format(
+        repaired=len(repair_result.get("repaired", [])),
+        failed=len(repair_result.get("failed", [])),
+        synced=synced,
+    )
+)
+PY
+    then
+        warn "Repair de estado Steam falhou."
+        return
+    fi
+}
+
 show_dry_run_plan() {
     printf 'Dry-run LumaTools\n'
     printf 'Modo: %s\n' "$MODE"
@@ -1188,6 +1310,9 @@ case "${1:-}" in
     --doctor|--self-test|--paths|--diagnose|--json|--dry-run)
         exec "$INSTALLER" "$@"
         ;;
+    --fix-all)
+        exec "$INSTALLER" --fix-all
+        ;;
     --repair)
         exec "$INSTALLER" --repair --no-prompt
         ;;
@@ -1282,6 +1407,7 @@ run_installation() {
     fi
 
     if [ "$FIX_ALL" = true ] && [ "$DRY_RUN" != true ]; then
+        repair_existing_lumatools_state
         run_self_test
     fi
 }

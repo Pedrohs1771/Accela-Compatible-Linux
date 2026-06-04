@@ -34,6 +34,7 @@ from utils.proton_tools import (
     apply_steam_compat_tool,
     build_default_proton_selection,
     clear_steam_compat_tool,
+    depot_selection_requires_proton,
 )
 from utils.steam_manifest import get_game_directory, repair_installed_app_state, write_acf_file
 from utils.wrapper_metadata import persist_selected_dlcs
@@ -229,6 +230,9 @@ class TaskManager(QObject):
                 self.game_data.get("game_name", self.game_data.get("appid", "")),
             )
         self._apply_default_linux_proton_selection(selected_depots)
+        if not self._validate_online_fix_depot_selection(selected_depots):
+            self.job_finished()
+            return
         self._start_download_with_destination(selected_depots)
 
     def _show_depot_selection_dialog(self):
@@ -273,6 +277,9 @@ class TaskManager(QObject):
             if not selected_depots:
                 self.job_finished()
                 return
+            if not self._validate_online_fix_depot_selection(selected_depots):
+                self.job_finished()
+                return
 
             self._start_download_with_destination(selected_depots)
         else:
@@ -286,6 +293,22 @@ class TaskManager(QObject):
             selected_depots, self.game_data.get("depots") or {}
         )
         self.game_data.update(proton_defaults)
+
+    def _validate_online_fix_depot_selection(self, selected_depots):
+        if not self.game_data or not self.game_data.get("apply_online_fix"):
+            return True
+        if sys.platform != "linux":
+            return True
+        if depot_selection_requires_proton(selected_depots, self.game_data.get("depots") or {}):
+            return True
+
+        message = (
+            "OnlineFix precisa da versão Windows do jogo rodando via Proton. "
+            "Selecione um depot Windows ou desmarque OnlineFix."
+        )
+        logger.warning(message)
+        QMessageBox.warning(self.main_window, "OnlineFix requer Windows/Proton", message)
+        return False
 
     def _start_download_with_destination(self, selected_depots):
         dest_path = self._get_destination_path()

@@ -144,7 +144,8 @@ class DepotSelectionDialog(QDialog):
                 except (ValueError, TypeError):
                     pass
 
-            item_text = f"{depot_id} - {final_desc}"
+            platform_label = self._display_platform_label(depot_data.get("oslist"))
+            item_text = f"{depot_id} {platform_label} - {final_desc}"
 
             item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, depot_id)
@@ -219,9 +220,21 @@ class DepotSelectionDialog(QDialog):
         section_layout.addWidget(self.online_checkbox)
 
         self.online_fix_checkbox = QCheckBox("Implementar Online Compatible")
-        self.online_fix_checkbox.setToolTip("Busca e injeta automaticamente correções de compatibilidade online para este jogo.")
+        self.online_fix_checkbox.setToolTip(
+            "OnlineFix usa arquivos Windows. Selecione um depot [Windows] e mantenha "
+            "Proton ativo para jogar online."
+        )
         self.online_fix_checkbox.setChecked(False)
+        self.online_fix_checkbox.toggled.connect(self._on_online_fix_toggled)
         section_layout.addWidget(self.online_fix_checkbox)
+
+        self.online_fix_notice = QLabel(
+            "OnlineFix requer versão [Windows] rodando via Proton. Depots [Linux] "
+            "continuam disponíveis, mas o OnlineFix será desativado para eles."
+        )
+        self.online_fix_notice.setWordWrap(True)
+        self.online_fix_notice.setVisible(False)
+        section_layout.addWidget(self.online_fix_notice)
 
         help_label = QLabel(
             "LumaTools aplica o modo de compatibilidade da Steam usando Proton "
@@ -280,6 +293,27 @@ class DepotSelectionDialog(QDialog):
         defaults["online_mode"] = self.online_checkbox.isChecked() if hasattr(self, "online_checkbox") else False
         defaults["apply_online_fix"] = self.online_fix_checkbox.isChecked() if hasattr(self, "online_fix_checkbox") else False
         return defaults
+
+    def _is_windows_or_generic_depot(self, depot_id):
+        depot_data = self.depots.get(str(depot_id), {})
+        platform = self._platform_family_for_depot(depot_data.get("oslist"))
+        return platform == "windows" or self._is_generic_depot(depot_data.get("oslist"))
+
+    def _has_windows_depot(self):
+        return any(
+            self._platform_family_for_depot(data.get("oslist")) == "windows"
+            for data in self.depots.values()
+        )
+
+    def _on_online_fix_toggled(self, enabled):
+        if self.online_fix_notice is not None:
+            self.online_fix_notice.setVisible(bool(enabled))
+
+        if enabled:
+            if self.proton_checkbox is not None:
+                self.proton_checkbox.setChecked(True)
+
+        self._refresh_proton_section()
 
     @staticmethod
     def _normalize_os_value(os_val):
@@ -360,6 +394,17 @@ class DepotSelectionDialog(QDialog):
         os_str = DepotSelectionDialog._normalize_os_value(os_val)
         return not os_str or "all" in os_str
 
+    @staticmethod
+    def _display_platform_label(os_val):
+        family = DepotSelectionDialog._platform_family_for_depot(os_val)
+        if family == "windows":
+            return "[Windows]"
+        if family == "linux":
+            return "[Linux]"
+        if family == "macos":
+            return "[Mac]"
+        return "[All]"
+
     def _get_selected_platform_families(self, selected_depots):
         families = set()
         for depot_id in selected_depots:
@@ -391,6 +436,51 @@ class DepotSelectionDialog(QDialog):
                 "Selecione pelo menos um depot antes de continuar.",
             )
             return
+
+        if (
+            hasattr(self, "online_fix_checkbox")
+            and self.online_fix_checkbox.isChecked()
+        ):
+            invalid_depots = [
+                str(depot_id)
+                for depot_id in selected_depots
+                if not self._is_windows_or_generic_depot(depot_id)
+            ]
+            if invalid_depots:
+                reply = QMessageBox.question(
+                    self,
+                    "OnlineFix será desativado",
+                    "Você selecionou depot Linux/Mac. OnlineFix só funciona com "
+                    "versão Windows via Proton.\n\n"
+                    "Deseja continuar baixando sem OnlineFix?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.online_fix_checkbox.setChecked(False)
+                else:
+                    return
+            if not depot_selection_requires_proton(selected_depots, self.depots):
+                reply = QMessageBox.question(
+                    self,
+                    "OnlineFix será desativado",
+                    "Nenhum depot [Windows] foi selecionado. Deseja continuar "
+                    "baixando sem OnlineFix?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.online_fix_checkbox.setChecked(False)
+                else:
+                    return
+            if not self._proton_tools:
+                QMessageBox.warning(
+                    self,
+                    "Proton não encontrado",
+                    "OnlineFix precisa rodar a versão Windows via Proton. "
+                    "Instale Proton Experimental na Steam e tente novamente.",
+                )
+                return
 
         selected_platforms = self._get_selected_platform_families(selected_depots)
         if len(selected_platforms) > 1:
