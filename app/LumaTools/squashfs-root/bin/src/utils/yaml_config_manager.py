@@ -378,6 +378,56 @@ def _fix_additional_apps_indentation(content: str) -> Tuple[str, bool]:
     return content, content != original_content
 
 
+def _merge_duplicate_additional_apps(content: str) -> Tuple[str, bool]:
+    """Merge duplicate AdditionalApps sections into one deterministic list."""
+    section_pattern = re.compile(r"^AdditionalApps:\s*$", re.MULTILINE)
+    matches = list(section_pattern.finditer(content))
+    if len(matches) <= 1:
+        return content, False
+
+    next_key_pattern = re.compile(r"^[A-Za-z][A-Za-z0-9_]*:\s*", re.MULTILINE)
+    entries: Dict[str, str] = {}
+    order = []
+    ranges = []
+
+    for match in matches:
+        section_start = match.end()
+        if section_start < len(content) and content[section_start] == "\n":
+            section_start += 1
+        section_end = _get_section_end(content, section_start, next_key_pattern)
+        ranges.append((match.start(), section_end))
+
+        section = content[section_start:section_end]
+        for item_match in re.finditer(
+            r"^\s*-\s*([0-9]+)\b(?:\s*#\s*(.*))?$", section, re.MULTILINE
+        ):
+            app_id = item_match.group(1)
+            comment = (item_match.group(2) or "").strip()
+            if app_id not in entries:
+                entries[app_id] = comment
+                order.append(app_id)
+            elif comment and not entries[app_id]:
+                entries[app_id] = comment
+
+    merged_lines = ["AdditionalApps:"]
+    for app_id in order:
+        comment = entries.get(app_id, "")
+        if comment:
+            merged_lines.append(f"  - {app_id}   # {comment}")
+        else:
+            merged_lines.append(f"  - {app_id}")
+    merged_section = "\n".join(merged_lines) + "\n"
+
+    new_content = content
+    first_start, first_end = ranges[0]
+    for start, end in reversed(ranges[1:]):
+        new_content = new_content[:start] + new_content[end:]
+    new_content = new_content[:first_start] + merged_section + new_content[first_end:]
+
+    logger.debug("Merged %d duplicate AdditionalApps sections", len(matches))
+    return new_content, new_content != content
+
+
 def _get_app_tokens_section(content: str) -> str:
     """Extract the AppTokens section from YAML content."""
     app_tokens_pattern = re.compile(r"^AppTokens:\s*$", re.MULTILINE)
@@ -439,9 +489,10 @@ def fix_slssteam_config_indentation(config_path: Path) -> bool:
             return False
 
         fixed_content, mod_apps = _fix_additional_apps_indentation(content)
+        fixed_content, mod_merged_apps = _merge_duplicate_additional_apps(fixed_content)
         fixed_content, mod_tokens = _fix_app_tokens_indentation(fixed_content)
 
-        if mod_apps or mod_tokens:
+        if mod_apps or mod_merged_apps or mod_tokens:
             if not _atomic_write(config_path, fixed_content):
                 return False
             logger.info(f"Fixed indentation in {config_path}")
@@ -504,6 +555,7 @@ def add_additional_app(config_path: Path, app_id: str, comment: str = "") -> boo
 
         # Fix indentation FIRST
         fixed_content, _ = _fix_additional_apps_indentation(content)
+        fixed_content, _ = _merge_duplicate_additional_apps(fixed_content)
         content = fixed_content
 
         # Check if AppID already exists in AdditionalApps

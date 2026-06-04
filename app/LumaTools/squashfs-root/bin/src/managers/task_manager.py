@@ -588,12 +588,12 @@ class TaskManager(QObject):
 
         if not self.game_data.get("force_proton"):
             if self.game_data.get("apply_online_fix"):
-                tool_name = self.game_data.get("proton_tool_name") or "proton_experimental"
-                if apply_steam_compat_tool(appid, tool_name):
-                    logger.info(
-                        f"Steam compatibility forced to '{tool_name}' for Online-Fix AppID {appid}"
-                    )
-                return
+                logger.warning(
+                    "Online-Fix requested for AppID %s, but selected depots do not "
+                    "require Proton. Keeping native Steam compatibility to avoid "
+                    "Windows/Linux depot mismatch.",
+                    appid,
+                )
             clear_steam_compat_tool(appid)
             return
 
@@ -642,6 +642,16 @@ class TaskManager(QObject):
         if not self.game_data or not self.game_data.get("apply_online_fix"):
             self._online_fix_status = "skipped"
             self._online_fix_status_text = "Não solicitado"
+            return
+
+        if sys.platform == "linux" and not self.game_data.get("force_proton"):
+            self._online_fix_status = "skipped"
+            self._online_fix_status_text = "Build Linux nativa"
+            logger.warning(
+                "Online-Fix ignorado: os depots selecionados para %s não são Windows. "
+                "Forçar Proton aqui faria a Steam pedir update/trocar depot.",
+                self.game_data.get("appid"),
+            )
             return
 
         game_dir = get_game_directory(self.current_dest_path, self.game_data)

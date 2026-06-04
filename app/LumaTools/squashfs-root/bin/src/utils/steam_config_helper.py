@@ -283,6 +283,59 @@ def set_steam_launch_options(steam_root, appid, launch_options):
     return success
 
 
+def _remove_launch_options(content, appid):
+    apps_block = _find_vdf_block(content, "apps")
+    if not apps_block:
+        return content, False
+
+    apps_start, apps_end = apps_block
+    app_block = _find_vdf_block(content, appid, apps_start, apps_end)
+    if not app_block:
+        return content, False
+
+    app_start, app_end = app_block
+    app_content = content[app_start:app_end + 1]
+    launch_pattern = r'^\s*"LaunchOptions"\s*"((?:\\.|[^"\\])*)"\s*\n?'
+    new_app_content = re.sub(
+        launch_pattern, "", app_content, count=1, flags=re.MULTILINE
+    )
+    if new_app_content == app_content:
+        return content, False
+    return content[:app_start] + new_app_content + content[app_end + 1:], True
+
+
+def clear_steam_launch_options(steam_root, appid):
+    """Remove LaunchOptions for an AppID from every Steam user config."""
+    if not steam_root or not os.path.exists(steam_root):
+        return False
+
+    userdata_path = os.path.join(steam_root, "userdata")
+    if not os.path.exists(userdata_path):
+        return False
+
+    success = False
+    for user_id in os.listdir(userdata_path):
+        user_config_path = os.path.join(userdata_path, user_id, "config", "localconfig.vdf")
+        if not os.path.exists(user_config_path):
+            continue
+        try:
+            with open(user_config_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            new_content, changed = _remove_launch_options(content, appid)
+            if not changed:
+                continue
+            backup_path = f"{user_config_path}.lumatools-{int(time.time())}.bak"
+            shutil.copy2(user_config_path, backup_path)
+            with open(user_config_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            success = True
+            logger.info("LaunchOptions removidas para AppID %s no usuário %s", appid, user_id)
+        except Exception as e:
+            logger.error("Erro ao limpar LaunchOptions para usuário %s: %s", user_id, e)
+
+    return success
+
+
 def _extract_online_fix_launch_options(game_dir: Path) -> str:
     info_path = game_dir / "LUMA_ONLINE_FIX_INFO.txt"
     if not info_path.exists():

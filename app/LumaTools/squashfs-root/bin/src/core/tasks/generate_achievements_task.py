@@ -41,15 +41,33 @@ class GenerateAchievementsTask(QObject):
         self.slscheevo_path = get_slscheevo_path()
 
     @staticmethod
-    def has_saved_account() -> bool:
+    def _resolve_login_account() -> str:
         save_dir = get_slscheevo_save_path()
         last_account = save_dir / "data" / "last_account.txt"
         try:
-            return last_account.exists() and bool(
+            saved = (
                 last_account.read_text(encoding="utf-8", errors="ignore").strip()
+                if last_account.exists()
+                else ""
             )
+            if saved:
+                return saved
         except OSError:
-            return False
+            pass
+
+        if sys.platform == "linux":
+            try:
+                from core.steam_helpers import find_steam_install
+                from utils.steam_manifest import get_active_steam_owner
+
+                return get_active_steam_owner(find_steam_install())
+            except Exception:
+                logger.debug("Failed to resolve active Steam account for SLScheevo", exc_info=True)
+        return ""
+
+    @classmethod
+    def has_saved_account(cls) -> bool:
+        return bool(cls._resolve_login_account())
 
     def run(self, app_ids=None):
         """Run SLScheevo to generate achievement stats"""
@@ -80,7 +98,8 @@ class GenerateAchievementsTask(QObject):
 
             logger.info(f"SLScheevo save directory: {save_dir}")
 
-            if not self.has_saved_account():
+            login_account = self._resolve_login_account()
+            if not login_account:
                 message = "SLScheevo sem login salvo; geração de conquistas ignorada."
                 self.progress.emit(message)
                 result = {
@@ -122,6 +141,8 @@ class GenerateAchievementsTask(QObject):
                     "--noclear",
                     "--save-dir",
                     str(save_dir),
+                    "--login",
+                    str(login_account),
                     "--silent",
                     "--max-tries",
                     "101",
@@ -143,7 +164,7 @@ class GenerateAchievementsTask(QObject):
             self.progress.emit(f"Save directory: {save_dir}")
             if app_ids:
                 self.progress.emit(f"Target app IDs: {app_ids}")
-            self.progress.emit("Using last saved account")
+            self.progress.emit(f"Using SLScheevo account: {login_account}")
 
             # Start process with unbuffered output
             self.process = subprocess.Popen(
@@ -211,6 +232,20 @@ class GenerateAchievementsTask(QObject):
                     "success": True,
                     "return_code": return_code,
                     "message": "No missing stats files to generate",
+                }
+                self.completed.emit(result)
+            elif return_code == 2:
+                message = (
+                    "SLScheevo login is not configured or could not authenticate; "
+                    "achievement generation skipped."
+                )
+                self.progress.emit(message)
+                logger.info(message)
+                result = {
+                    "success": True,
+                    "return_code": return_code,
+                    "message": message,
+                    "skipped": True,
                 }
                 self.completed.emit(result)
             else:

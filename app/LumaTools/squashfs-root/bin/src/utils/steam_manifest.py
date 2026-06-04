@@ -129,6 +129,44 @@ def _build_depots_content(
     return depots_content
 
 
+def _filter_depots_for_linux_platform(
+    selected_depots: Iterable[Any],
+    all_depots: Dict[str, Any],
+    logger=None,
+) -> list[Any]:
+    """Keep appmanifest depots aligned with the platform Steam will mount."""
+    selected = list(selected_depots)
+    if sys.platform != "linux":
+        return selected
+
+    platforms = {
+        str(depot_id): _get_depot_platform(all_depots.get(str(depot_id), {}))
+        for depot_id in selected
+    }
+    has_windows = any(platform == "windows" for platform in platforms.values())
+    has_linux = any(platform == "linux" for platform in platforms.values())
+
+    if has_windows:
+        allowed = {"windows", "unknown"}
+    elif has_linux:
+        allowed = {"linux", "unknown"}
+    else:
+        return selected
+
+    filtered = [
+        depot_id
+        for depot_id in selected
+        if platforms.get(str(depot_id), "unknown") in allowed
+    ]
+    if filtered != selected and logger:
+        logger.info(
+            "Filtered appmanifest depots for Linux platform: kept %s, skipped %s",
+            [str(item) for item in filtered],
+            [str(item) for item in selected if item not in filtered],
+        )
+    return filtered
+
+
 def build_acf_content(
     game_data: Dict[str, Any],
     size_on_disk: int,
@@ -142,11 +180,14 @@ def build_acf_content(
     all_manifests = game_data.get("manifests", {})
     all_depots = game_data.get("depots", {})
     last_owner = str(game_data.get("lastowner") or game_data.get("LastOwner") or "0")
+    acf_depots = _filter_depots_for_linux_platform(
+        selected_depots, all_depots, logger
+    )
 
     platform_config = _build_platform_config(
-        selected_depots, all_depots, log_proton, logger
+        acf_depots, all_depots, log_proton, logger
     )
-    depots_content = _build_depots_content(selected_depots, all_manifests, all_depots)
+    depots_content = _build_depots_content(acf_depots, all_manifests, all_depots)
 
     installed_depots_str = (
         f'\t"InstalledDepots"\n\t{{\n{depots_content}\t}}'

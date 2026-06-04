@@ -630,8 +630,14 @@ class CLITaskManager:
         if not appid:
             return
 
-        force_online_fix_proton = self.game_data.get("apply_online_fix")
-        if not self.game_data.get("force_proton") and not force_online_fix_proton:
+        if not self.game_data.get("force_proton"):
+            if self.game_data.get("apply_online_fix"):
+                self.logger.warning(
+                    "Online-Fix requested for AppID %s, but selected depots do not "
+                    "require Proton. Keeping native Steam compatibility to avoid "
+                    "Windows/Linux depot mismatch.",
+                    appid,
+                )
             clear_steam_compat_tool(appid)
             return
 
