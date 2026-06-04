@@ -729,6 +729,36 @@ sync_tree() {
         fi
     fi
 
+    if [ -z "$SOURCE_REVISION" ] && [ -f "$ROOT_DIR/release/latest.json" ]; then
+        SOURCE_REVISION="$(python3 - "$ROOT_DIR/release/latest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    print(str(payload.get("commit_sha", "")).strip())
+except Exception:
+    print("")
+PY
+)"
+    fi
+
+    if [ -z "$SOURCE_VERSION" ] && [ -f "$ROOT_DIR/release/latest.json" ]; then
+        SOURCE_VERSION="$(python3 - "$ROOT_DIR/release/latest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    print(str(payload.get("version", "")).strip())
+except Exception:
+    print("")
+PY
+)"
+    fi
+
     if [ -n "$SOURCE_REVISION" ]; then
         printf '%s\n' "$SOURCE_REVISION" > "$DEST_DIR/.repo_revision"
     fi

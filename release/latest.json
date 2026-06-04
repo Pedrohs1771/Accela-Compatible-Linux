@@ -1,18 +1,18 @@
 {
-  "version": "v1.0.7",
-  "display_name": "Luma Tools v1.0.7",
+  "version": "v1.0.8",
+  "display_name": "Luma Tools v1.0.8",
   "channel": "stable",
-  "commit_sha": "439af197b47b460a7e51816e81849fa8389c191a",
-  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip",
-  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip.sha256",
+  "commit_sha": "9198d1dba0fb4b4b1c9c3d39e4cb16f0cc6b16d7",
+  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip",
+  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip.sha256",
   "signature_url": "",
-  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.7",
-  "published_at": "2026-06-02T22:45:00Z",
-  "notes": "Correção de estabilidade para downloads em conexão instável e atualização dos canais oficiais do Luma Tools.",
+  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.8",
+  "published_at": "2026-06-03T21:05:00-03:00",
+  "notes": "Instalação plug and play via bootstrap, Ryuu Fixes nas integrações e fallback robusto de extração para Online-Fix.",
   "platforms": {
     "linux-x64": {
-      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip",
-      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.7/LumaTools-Linux-v1.0.7.zip.sha256",
+      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip",
+      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip.sha256",
       "signature_url": ""
     },
     "windows-x64": {

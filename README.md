@@ -73,7 +73,7 @@ bash install.sh --fix-all
 
 Linux stable:
 ```text
-LumaTools-Linux-v1.0.7.zip
+LumaTools-Linux-v1.0.8.zip
 ```
 
 Windows beta:

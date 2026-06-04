@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import morrenus_api
+from core.ryuu_client import load_ryuu_auth_key, save_ryuu_auth_key
 from ui.dialogs.custom_gifs import CustomGifsDialog
 from ui.dialogs.dialog_helpers import create_standard_buttons
 from utils.helpers import (
@@ -264,6 +265,7 @@ class SettingsDialog(QDialog):
         self.ignore_color_warnings_checkbox = None
         self.current_font = QFont()
         self.sgdb_api_key_input = None
+        self.ryuu_api_key_input = None
         self.morrenus_stats_widget = None
         self.morrenus_tab_initialized = False
 
@@ -643,6 +645,15 @@ class SettingsDialog(QDialog):
             help_url="https://www.steamgriddb.com/profile/account",
         )
         key_layout.addLayout(sgdb_layout)
+
+        ryuu_layout, self.ryuu_api_key_input = self._create_api_key_setting(
+            "Chave da API Ryuu Fixes:",
+            "Cole sua auth_key do Ryuu",
+            "ryuu_auth_key",
+            help_url="https://generator.ryuu.lol/",
+        )
+        self.ryuu_api_key_input.setText(load_ryuu_auth_key())
+        key_layout.addLayout(ryuu_layout)
 
         key_group.setLayout(key_layout)
         layout.addWidget(key_group)
@@ -1655,6 +1666,8 @@ class SettingsDialog(QDialog):
         if self.sgdb_api_key_input:
             sgdb_key = self.sgdb_api_key_input.text().strip()
             self.settings.setValue("sgdb_api_key", sgdb_key)
+        if self.ryuu_api_key_input:
+            save_ryuu_auth_key(self.ryuu_api_key_input.text().strip())
 
     def _save_download_settings(self) -> None:
         if self.sls_mode_checkbox is not None:
