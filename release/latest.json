@@ -2,13 +2,13 @@
   "version": "v1.0.11",
   "display_name": "Luma Tools Linux v1.0.11",
   "channel": "stable",
-  "commit_sha": "5bac12b4309bd4f7c5b339d883b99490bd480fbd",
+  "commit_sha": "d7a1b448d704b2a50c4b66e2b04beab6af91f39e",
   "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.11/LumaTools-Linux-v1.0.11.zip",
   "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.11/LumaTools-Linux-v1.0.11.zip.sha256",
   "signature_url": "",
   "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.11",
-  "published_at": "2026-06-04T16:05:00-03:00",
-  "notes": "Repara estado da Steam antes de reiniciar: manifests LumaTools, updates pendentes e Launch Options OnlineFix em todos os usuários.",
+  "published_at": "2026-06-04T16:21:58-03:00",
+  "notes": "Hardening Linux: detecta Steam native/Flatpak/Snap pelo processo real, corrige caminho do SLSsteam config, repara LastOwner/appmanifest, adiciona Luma Doctor e deixa Ryuu manual/opcional.",
   "platforms": {
     "linux-x64": {
       "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.11/LumaTools-Linux-v1.0.11.zip",
