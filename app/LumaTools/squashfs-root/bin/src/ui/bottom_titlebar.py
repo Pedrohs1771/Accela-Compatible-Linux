@@ -21,6 +21,7 @@ from .assets import (
     GEAR_SVG,
     MAXIMIZE,
     MINIMIZE,
+    PAPERCLIP_SVG,
     POWER_SVG,
     SEARCH_SVG,
     UPDATE_SVG,
@@ -65,6 +66,7 @@ class BottomTitleBar(QFrame):
         # Buttons
         self.status_button: Optional[QPushButton] = None
         self.search_button: Optional[QPushButton] = None
+        self.ryuu_button: Optional[QPushButton] = None
         self.game_library_button: Optional[QPushButton] = None
         self.settings_button: Optional[QPushButton] = None
         self.update_button: Optional[QPushButton] = None
@@ -164,7 +166,9 @@ class BottomTitleBar(QFrame):
         layout.addWidget(self.search_button)
 
         self.ryuu_button = self._create_svg_button(
-            SEARCH_SVG, getattr(parent, "open_ryuu_fixes", None), "Ryuu Fixes"
+            PAPERCLIP_SVG,
+            getattr(parent, "open_ryuu_fixes", None),
+            "Ryuu Fixes",
         )
         layout.addWidget(self.ryuu_button)
 
@@ -269,6 +273,7 @@ class BottomTitleBar(QFrame):
             self.minimize_button,
             self.maximize_button,
             self.search_button,
+            self.ryuu_button,
             self.game_library_button,
             self.settings_button,
             self.close_button,
@@ -290,6 +295,7 @@ class BottomTitleBar(QFrame):
             (self.minimize_button, MINIMIZE),
             (self.maximize_button, MAXIMIZE),
             (self.search_button, SEARCH_SVG),
+            (self.ryuu_button, PAPERCLIP_SVG),
             (self.game_library_button, BOOK_SVG),
             (self.settings_button, GEAR_SVG),
             (self.update_button, UPDATE_SVG),
@@ -368,6 +374,21 @@ class BottomTitleBar(QFrame):
         try:
             button = QPushButton()
             button.setToolTip(tooltip)
+            button.setFlat(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 3px;
+                    padding: 1px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255, 255, 255, 0.08);
+                }
+                """
+            )
 
             settings = get_settings()
             accent_color = QColor(settings.value("accent_color", "#C06C84"))

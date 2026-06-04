@@ -26,6 +26,8 @@ from core.tasks.generate_achievements_task import GenerateAchievementsTask
 from core.tasks.monitor_speed_task import SpeedMonitorTask
 from core.tasks.process_zip_task import ProcessZipTask
 from core.tasks.steamless_task import SteamlessTask
+from core.fix_planner import apply_ryuu_fix, record_online_fix_layer
+from core.ryuu_client import RyuuClient, RyuuClientError, load_ryuu_auth_key
 
 from utils.helpers import get_base_path
 from utils.proton_tools import (
@@ -33,7 +35,7 @@ from utils.proton_tools import (
     build_default_proton_selection,
     clear_steam_compat_tool,
 )
-from utils.steam_manifest import get_game_directory, write_acf_file
+from utils.steam_manifest import get_game_directory, repair_installed_app_state, write_acf_file
 from utils.wrapper_metadata import persist_selected_dlcs
 from utils.yaml_config_manager import (
     get_user_config_path,
@@ -86,6 +88,10 @@ class TaskManager(QObject):
         self.current_dest_path: Optional[str] = None
         self.slssteam_mode_was_active = False
         self.library_mode_was_active = False
+        self._ryuu_status = {"status": "skipped", "message": ""}
+        self._pending_ryuu_fix_path: Optional[str] = None
+        self._pending_ryuu_error = ""
+        self._pending_ryuu_apply_result: Optional[Dict[str, Any]] = None
         self._steamless_success = None
         self._steamless_manual_run = False
 
@@ -111,6 +117,10 @@ class TaskManager(QObject):
         self._last_steamless_status = "not_run"
         self._last_steamless_status_text = "N/D"
         self._last_installed_game = None
+        self._online_fix_status = "skipped"
+        self._online_fix_status_text = "N/D"
+        self._launch_options_status = "skipped"
+        self._launch_options_status_text = "N/D"
 
         self._delete_files_on_cancel: Optional[bool] = None
 
@@ -157,6 +167,9 @@ class TaskManager(QObject):
         self.game_data = game_data
 
         if self.game_data and self.game_data.get("depots"):
+            if self._should_auto_select_depots():
+                self._auto_select_depots_from_job()
+                return
             self._show_depot_selection_dialog()
         else:
             QMessageBox.warning(
@@ -165,6 +178,30 @@ class TaskManager(QObject):
                 "O arquivo ZIP foi processado, mas nenhum depot disponível para download foi encontrado.",
             )
             self.job_finished()
+
+    def _should_auto_select_depots(self) -> bool:
+        metadata = self.current_job_metadata or {}
+        return bool(metadata.get("auto_select_depots")) and metadata.get("source") == "ryuu"
+
+    def _auto_select_depots_from_job(self) -> None:
+        if not self.game_data:
+            self.job_finished()
+            return
+
+        depots = self.game_data.get("depots") or {}
+        selected_depots = list(depots.keys())
+        if not selected_depots:
+            self.job_finished()
+            return
+
+        logger.info(
+            "Ryuu job auto-selected %s depot(s) for %s",
+            len(selected_depots),
+            self.game_data.get("game_name", self.game_data.get("appid", "")),
+        )
+        self.game_data["selected_depots_list"] = selected_depots
+        self._apply_default_linux_proton_selection(selected_depots)
+        self._start_download_with_destination(selected_depots)
 
     def _show_depot_selection_dialog(self):
         # Deferred import to prevent circular dependency
@@ -315,6 +352,10 @@ class TaskManager(QObject):
         self._last_slscheevo_status_text = "N/D"
         self._last_steamless_status = "not_run"
         self._last_steamless_status_text = "N/D"
+        self._online_fix_status = "skipped"
+        self._online_fix_status_text = "N/D"
+        self._launch_options_status = "skipped"
+        self._launch_options_status_text = "N/D"
 
         self.main_window.ui_state.switch_to_download_gif()
         self._update_status_button_color()
@@ -414,6 +455,10 @@ class TaskManager(QObject):
 
         self.main_window.drop_text_label.setText("Finalizando instalação...")
         logger.info("Starting post-download I/O processing in background thread...")
+        self._ryuu_status = {"status": "skipped", "message": ""}
+        self._pending_ryuu_fix_path = None
+        self._pending_ryuu_error = ""
+        self._pending_ryuu_apply_result = None
 
         size_on_disk = 0
         if self.download_task:
@@ -470,6 +515,10 @@ class TaskManager(QObject):
         all_manifests = self.game_data.get("manifests", {})
         if selected_depots and all_manifests:
             self._save_main_depot_info(self.game_data, selected_depots, all_manifests)
+
+        appid = self.game_data.get("appid")
+        if appid and self.current_dest_path:
+            repair_installed_app_state(self.current_dest_path, appid, logger=logger)
 
     def _persist_wrapper_metadata(self):
         """
@@ -563,10 +612,14 @@ class TaskManager(QObject):
     def _finalize_online_fix(self):
         """Busca e injeta o Online-Fix se solicitado durante a instalação."""
         if not self.game_data or not self.game_data.get("apply_online_fix"):
+            self._online_fix_status = "skipped"
+            self._online_fix_status_text = "Não solicitado"
             return
 
         game_dir = get_game_directory(self.current_dest_path, self.game_data)
         game_name = self.game_data.get("game_name", "")
+        self._online_fix_status = "error"
+        self._online_fix_status_text = "Falhou"
         
         logger.info(f"Iniciando automação do Online-Fix para: {game_name}")
         
@@ -615,6 +668,15 @@ class TaskManager(QObject):
                 
                 if success:
                     logger.info("Online-Fix aplicado com sucesso durante a instalação!")
+                    self._online_fix_status = "ok"
+                    self._online_fix_status_text = "Aplicado"
+                    record_online_fix_layer(
+                        game_dir,
+                        appid=str(self.game_data.get("appid", "")),
+                        game_name=game_name,
+                        found_dlls=found_dlls,
+                        launch_options=launch_options,
+                    )
                     if sys.platform == "linux":
                         # Usar as launch_options geradas pelo próprio injetor (que já usa ';' e lida com loaders)
                         if self.game_data.get("appid"):
@@ -631,8 +693,12 @@ class TaskManager(QObject):
                             # 2. Definir Launch Options automaticamente
                             steam_root = find_steam_install()
                             if set_steam_launch_options(steam_root, appid, launch_options):
+                                self._launch_options_status = "ok"
+                                self._launch_options_status_text = "Configuradas"
                                 logger.info(f"Launch Options configuradas automaticamente para AppID {appid}: {launch_options}")
                             else:
+                                self._launch_options_status = "error"
+                                self._launch_options_status_text = "Falhou"
                                 logger.warning("Não foi possível configurar Launch Options automaticamente. O usuário deverá fazer manualmente.")
                 else:
                     logger.error("Falha ao injetar o Online-Fix.")
@@ -671,7 +737,10 @@ class TaskManager(QObject):
     def _finalize_job_logic(self):
         """Called on Main Thread. Acts as a State Machine Conductor."""
         # Force steam restart prompt to be pending if we applied Goldberg/Online mode
-        if self.game_data and self.game_data.get("online_mode"):
+        current_metadata = self.current_job_metadata or {}
+        if current_metadata.get("source") == "ryuu":
+            self.main_window.job_queue.steam_restart_prompt_pending = True
+        elif self.game_data and self.game_data.get("online_mode"):
             self.main_window.job_queue.steam_restart_prompt_pending = True
         elif self._should_prompt_for_steam_restart():
             self.main_window.job_queue.steam_restart_prompt_pending = True
@@ -731,6 +800,11 @@ class TaskManager(QObject):
                 self._start_application_shortcuts_step()
                 return
 
+        if self._should_offer_ryuu_fix() and "ryuu_check" not in self._job_steps_completed:
+            self._job_steps_completed.add("ryuu_check")
+            self._start_ryuu_check_step()
+            return
+
         # --- FINISH ---
         logger.info("All post-processing steps complete. Finishing job.")
         self.main_window.job_queue.jobs_completed_count += 1
@@ -738,6 +812,117 @@ class TaskManager(QObject):
             self.main_window.game_manager.scan_steam_libraries_async()
 
         self.job_finished()
+
+    def _should_offer_ryuu_fix(self) -> bool:
+        if self.is_cancelling or not self.game_data or not self.current_dest_path:
+            return False
+        if (self.current_job_metadata or {}).get("source") == "ryuu":
+            return False
+        appid = str(self.game_data.get("appid", "")).strip()
+        if not appid.isdigit() or appid == "0":
+            return False
+        return bool(load_ryuu_auth_key())
+
+    def _start_ryuu_check_step(self) -> None:
+        game_name = self.game_data.get("game_name", "Jogo") if self.game_data else "Jogo"
+        self.main_window.drop_text_label.setText(f"Verificando Ryuu Fix para {game_name}...")
+        threading.Thread(target=self._run_ryuu_download_worker, daemon=True).start()
+
+    def _run_ryuu_download_worker(self) -> None:
+        try:
+            if not self.game_data:
+                raise RyuuClientError("Jogo invalido.")
+            appid = str(self.game_data.get("appid", "")).strip()
+            output_dir = Path(get_base_path()) / "ryuu_fixes"
+            fix_path = RyuuClient().download(appid, output_dir, branch="public")
+            self._pending_ryuu_fix_path = str(fix_path)
+            self._pending_ryuu_error = ""
+        except Exception as exc:
+            self._pending_ryuu_fix_path = None
+            self._pending_ryuu_error = str(exc)
+            logger.info("Ryuu Fix nao disponivel ou falhou ao baixar: %s", exc)
+        finally:
+            QMetaObject.invokeMethod(
+                self, "_on_ryuu_check_finished", Qt.ConnectionType.QueuedConnection
+            )
+
+    @pyqtSlot()
+    def _on_ryuu_check_finished(self) -> None:
+        if self.is_cancelling:
+            self._finalize_job_logic()
+            return
+
+        if not self._pending_ryuu_fix_path:
+            self._ryuu_status = {"status": "not_found", "message": self._pending_ryuu_error}
+            self._finalize_job_logic()
+            return
+
+        game_name = self.game_data.get("game_name", "Jogo") if self.game_data else "Jogo"
+        prompt = QMessageBox(self.main_window)
+        prompt.setWindowTitle("Ryuu Fix")
+        prompt.setText(f"Fix Ryuu encontrado para {game_name}. Deseja aplicar agora?")
+        apply_button = prompt.addButton("Aplicar fix", QMessageBox.ButtonRole.AcceptRole)
+        prompt.addButton("Pular", QMessageBox.ButtonRole.RejectRole)
+        prompt.setDefaultButton(apply_button)
+        prompt.exec()
+        if prompt.clickedButton() != apply_button:
+            self._ryuu_status = {"status": "skipped", "message": "Usuario pulou Ryuu Fix."}
+            self._finalize_job_logic()
+            return
+
+        self.main_window.drop_text_label.setText(f"Aplicando Ryuu Fix em {game_name}...")
+        threading.Thread(target=self._run_ryuu_apply_worker, daemon=True).start()
+
+    def _run_ryuu_apply_worker(self) -> None:
+        try:
+            if not self.game_data or not self.current_dest_path or not self._pending_ryuu_fix_path:
+                raise RyuuClientError("Dados do jogo indisponiveis.")
+            appid = str(self.game_data.get("appid", "")).strip()
+            game_name = self.game_data.get("game_name", "Jogo")
+            game_dir = get_game_directory(self.current_dest_path, self.game_data)
+            self._pending_ryuu_apply_result = apply_ryuu_fix(
+                game_dir,
+                self._pending_ryuu_fix_path,
+                appid=appid,
+                game_name=game_name,
+                branch="public",
+                preserve_online_fix=True,
+            )
+            self._pending_ryuu_error = ""
+        except Exception as exc:
+            self._pending_ryuu_apply_result = None
+            self._pending_ryuu_error = str(exc)
+            logger.error("Falha ao aplicar Ryuu Fix: %s", exc)
+        finally:
+            QMetaObject.invokeMethod(
+                self, "_on_ryuu_apply_finished", Qt.ConnectionType.QueuedConnection
+            )
+
+    @pyqtSlot()
+    def _on_ryuu_apply_finished(self) -> None:
+        if self._pending_ryuu_apply_result is None:
+            self._ryuu_status = {"status": "error", "message": self._pending_ryuu_error}
+            QMessageBox.warning(
+                self.main_window,
+                "Ryuu Fix",
+                "Não consegui baixar/aplicar o fix Ryuu. Verifique sua key ou tente novamente.",
+            )
+        else:
+            skipped = self._pending_ryuu_apply_result.get("skipped_conflicts") or []
+            if skipped:
+                self._ryuu_status = {
+                    "status": "applied_with_conflicts",
+                    "message": "Ryuu aplicado sem sobrescrever arquivos do OnlineFix.",
+                }
+                QMessageBox.information(
+                    self.main_window,
+                    "Ryuu Fix",
+                    "Ryuu Fix aplicado. Arquivos protegidos do OnlineFix foram mantidos.",
+                )
+            else:
+                self._ryuu_status = {"status": "applied", "message": "Ryuu Fix aplicado."}
+                QMessageBox.information(self.main_window, "Ryuu Fix", "Ryuu Fix aplicado.")
+        self._finalize_job_logic()
 
     def _start_application_shortcuts_step(self):
         self.main_window.drop_text_label.setText(
@@ -851,6 +1036,15 @@ class TaskManager(QObject):
             self._finalize_job_logic()
             return
 
+        if not self._game_has_windows_executables(game_directory):
+            logger.info("Steamless ignorado: nenhum .exe encontrado em %s", game_directory)
+            self._last_steamless_success = None
+            self._last_steamless_status = "not_run"
+            self._last_steamless_status_text = "Ignorado: nenhum .exe"
+            self._steamless_ran = False
+            self._finalize_job_logic()
+            return
+
         logger.info("\n" + "=" * 40)
         logger.info("Starting Steamless DRM Removal...")
 
@@ -860,6 +1054,13 @@ class TaskManager(QObject):
 
         self._steamless_ran = True
         self._update_status_button_color()
+
+    @staticmethod
+    def _game_has_windows_executables(game_directory: str) -> bool:
+        for _, _, files in os.walk(game_directory):
+            if any(file_name.lower().endswith(".exe") for file_name in files):
+                return True
+        return False
 
     def run_steamless_manually(self, exe_path: str, game_name: Optional[str] = None):
         self._reset_steamless_task()
@@ -1441,7 +1642,22 @@ class TaskManager(QObject):
         # Check if SLScheevo exists before trying to run it
         from utils.helpers import get_slscheevo_path
         if not get_slscheevo_path().exists():
-            logger.error("SLScheevo dependency missing, skipping achievement generation.")
+            logger.info("SLScheevo dependency missing; achievement generation skipped.")
+            self._last_slscheevo_status = "not_run"
+            self._last_slscheevo_status_text = "Ignorado: ausente"
+            self._last_slscheevo_success = None
+            self._slscheevo_ran = False
+            self._slscheevo_error = False
+            self._finalize_job_logic()
+            return
+
+        if not GenerateAchievementsTask.has_saved_account():
+            logger.info("SLScheevo sem login salvo; geração de conquistas ignorada.")
+            self._last_slscheevo_status = "not_run"
+            self._last_slscheevo_status_text = "Ignorado: sem login"
+            self._last_slscheevo_success = None
+            self._slscheevo_ran = False
+            self._slscheevo_error = False
             self._finalize_job_logic()
             return
 
@@ -1724,6 +1940,7 @@ class TaskManager(QObject):
             slscheevo_ok=slscheevo_ok,
             steamless_ok=steamless_ok,
         )
+        self._set_post_install_summary(ddm_ok)
 
         self.main_window.ui_state.show_main_gif()
         self.main_window.progress_bar.setVisible(False)
@@ -2142,14 +2359,63 @@ class TaskManager(QObject):
 
         if slscheevo_ok is None:
             self._last_slscheevo_status = "not_run"
-            self._last_slscheevo_status_text = "N/D"
+            if not self._last_slscheevo_status_text.startswith("Ignorado"):
+                self._last_slscheevo_status_text = "N/D"
         else:
             self._last_slscheevo_status = "ok" if slscheevo_ok else "error"
             self._last_slscheevo_status_text = "Concluído" if slscheevo_ok else "Falhou"
 
         if steamless_ok is None:
             self._last_steamless_status = "not_run"
-            self._last_steamless_status_text = "N/D"
+            if not self._last_steamless_status_text.startswith("Ignorado"):
+                self._last_steamless_status_text = "N/D"
         else:
             self._last_steamless_status = "ok" if steamless_ok else "error"
             self._last_steamless_status_text = self._get_steamless_status_text()
+
+    def _set_post_install_summary(self, installed_ok: bool) -> None:
+        if not self.main_window or not self.game_data:
+            return
+
+        game_name = self.game_data.get("game_name", "Jogo")
+        lines = [
+            f"{'OK' if installed_ok else 'ERRO'} {game_name} instalado"
+        ]
+
+        if self._online_fix_status == "ok":
+            lines.append("OK OnlineFix aplicado")
+        elif self._online_fix_status == "error":
+            lines.append("AVISO OnlineFix não foi aplicado")
+
+        if self._launch_options_status == "ok":
+            lines.append("OK Launch Options configuradas")
+        elif self._launch_options_status == "error":
+            lines.append("AVISO Launch Options não foram configuradas")
+
+        if self._last_steamless_status_text.startswith("Ignorado"):
+            lines.append(f"INFO Steamless {self._last_steamless_status_text.lower()}")
+        elif self._last_steamless_status == "ok":
+            lines.append(f"OK Steamless: {self._last_steamless_status_text}")
+        elif self._last_steamless_status == "error":
+            lines.append("AVISO Steamless falhou")
+
+        if self._last_slscheevo_status_text.startswith("Ignorado"):
+            lines.append(f"INFO SLScheevo {self._last_slscheevo_status_text.lower()}")
+        elif self._last_slscheevo_status == "ok":
+            lines.append("OK SLScheevo concluído")
+        elif self._last_slscheevo_status == "error":
+            lines.append("AVISO SLScheevo falhou")
+
+        if sys.platform == "linux":
+            slssteam_status = DownloadSLSsteamTask.installed_library_status()
+            if not slssteam_status.get("compatible"):
+                lines.append(
+                    "AVISO SLSsteam incompatível: Steam será aberta sem injeção"
+                )
+
+        if self._ryuu_status.get("status") in {"applied", "applied_with_conflicts"}:
+            lines.append("OK Ryuu Fix aplicado")
+        elif self._ryuu_status.get("status") == "error":
+            lines.append("AVISO Ryuu Fix não foi aplicado")
+
+        self.main_window.drop_text_label.setText("\n".join(lines))

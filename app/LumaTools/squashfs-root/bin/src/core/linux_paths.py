@@ -192,20 +192,31 @@ def get_slssteam_setup_command(mode: Optional[str] = None) -> str:
     return "install"
 
 
-def find_slssteam_paths(mode: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+def find_slssteam_paths(
+    mode: Optional[str] = None,
+    expected_elf_class: Optional[int] = None,
+) -> tuple[Optional[str], Optional[str]]:
     steam_mode = mode or detect_linux_steam_mode()
     dirs: list[Path] = []
 
     if steam_mode == "flatpak":
-        dirs.extend(
-            [
-                flatpak_slssteam_dir(),
-                _home() / ".var" / "app" / FLATPAK_APP_ID / "data" / "SLSsteam",
-                native_slssteam_dir(),
-            ]
-        )
+        base_dirs = [
+            flatpak_slssteam_dir(),
+            _home() / ".var" / "app" / FLATPAK_APP_ID / "data" / "SLSsteam",
+            native_slssteam_dir(),
+        ]
     else:
-        dirs.extend([native_slssteam_dir(), flatpak_slssteam_dir()])
+        base_dirs = [native_slssteam_dir(), flatpak_slssteam_dir()]
+
+    arch_subdirs = {
+        64: ["linux-x64", "linux-amd64", "x86_64", "amd64", "lib64"],
+        32: ["linux-x86", "linux-i386", "i386", "i686", "lib32"],
+    }
+
+    for base_dir in base_dirs:
+        for subdir in arch_subdirs.get(expected_elf_class, []):
+            dirs.append(base_dir / subdir)
+        dirs.append(base_dir)
 
     slssteam_path: Optional[str] = None
     library_inject_path: Optional[str] = None

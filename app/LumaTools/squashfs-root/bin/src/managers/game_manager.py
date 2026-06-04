@@ -61,6 +61,8 @@ class GameManager(QObject):
         self.games = []
         self.selected_game = None
         self.filtered_games = []
+        self.source_filter = "all"
+        self.search_query = ""
 
         # Manifest check task management
         self.manifest_check_task = None
@@ -108,8 +110,7 @@ class GameManager(QObject):
 
     def get_all_games(self):
         """Get all games in the library - returns sorted list"""
-        games_to_return = self.filtered_games if self.filtered_games else self.games
-        return self._get_sorted_games(games_to_return)
+        return self._get_sorted_games(self.filtered_games)
 
     def select_game(self, game_id):
         """Select a specific game"""
@@ -140,28 +141,42 @@ class GameManager(QObject):
 
     def _apply_filters(self):
         """Apply current filters to the game list"""
-        # TODO: Implement filtering logic
-        self.filtered_games = self._get_sorted_games(self.games)
+        games = list(self.games)
+
+        if self.source_filter == "lumatools":
+            games = [g for g in games if g.get("is_lumatools_install")]
+        elif self.source_filter == "steam":
+            games = [g for g in games if not g.get("is_lumatools_install")]
+
+        query = self.search_query.strip().lower()
+        if query:
+            games = [
+                game
+                for game in games
+                if query in game.get("game_name", "").lower()
+            ]
+
+        self.filtered_games = self._get_sorted_games(games)
+
+    def set_source_filter(self, source_filter):
+        normalized = source_filter if source_filter in {"all", "lumatools", "steam"} else "all"
+        if self.source_filter == normalized:
+            return
+        self.source_filter = normalized
+        self._apply_filters()
+        self.library_updated.emit()
 
     def search_games(self, query):
         """Search games by name or other criteria"""
         # TODO: Implement search functionality
-        if not query:
-            self.filtered_games = []
-            self._apply_filters()
-            self.library_updated.emit()
-            return
-
-        query = query.lower()
-        matched_games = [
-            game for game in self.games if query in game.get("game_name", "").lower()
-        ]
-        self.filtered_games = self._get_sorted_games(matched_games)
+        self.search_query = query or ""
+        self._apply_filters()
         self.library_updated.emit()
 
     def clear_filters(self):
         """Clear all applied filters"""
-        self.filtered_games = []
+        self.search_query = ""
+        self.source_filter = "all"
         self._apply_filters()
         self.library_updated.emit()
 

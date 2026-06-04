@@ -40,6 +40,17 @@ class GenerateAchievementsTask(QObject):
         # Path to SLScheevo executable
         self.slscheevo_path = get_slscheevo_path()
 
+    @staticmethod
+    def has_saved_account() -> bool:
+        save_dir = get_slscheevo_save_path()
+        last_account = save_dir / "data" / "last_account.txt"
+        try:
+            return last_account.exists() and bool(
+                last_account.read_text(encoding="utf-8", errors="ignore").strip()
+            )
+        except OSError:
+            return False
+
     def run(self, app_ids=None):
         """Run SLScheevo to generate achievement stats"""
         logger.info("Starting achievement generation task")
@@ -68,6 +79,18 @@ class GenerateAchievementsTask(QObject):
             save_dir = get_slscheevo_save_path()
 
             logger.info(f"SLScheevo save directory: {save_dir}")
+
+            if not self.has_saved_account():
+                message = "SLScheevo sem login salvo; geração de conquistas ignorada."
+                self.progress.emit(message)
+                result = {
+                    "success": True,
+                    "skipped": True,
+                    "return_code": 0,
+                    "message": message,
+                }
+                self.completed.emit(result)
+                return result
 
             # Prepare command
             # If using Python script, add python executable before the script path

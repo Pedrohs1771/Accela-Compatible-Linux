@@ -21,6 +21,81 @@ _slssteam_so_path_cache = None
 _library_inject_so_path_cache = None
 
 
+def _elf_class(path: str | None) -> int | None:
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(5)
+    except OSError:
+        return None
+    if len(header) < 5 or header[:4] != b"\x7fELF":
+        return None
+    if header[4] == 1:
+        return 32
+    if header[4] == 2:
+        return 64
+    return None
+
+
+def _steam_audit_target_path(steam_mode: str | None = None) -> str | None:
+    if sys.platform != "linux":
+        return None
+
+    mode = steam_mode or detect_linux_steam_mode()
+    root = find_primary_steam_root(preferred_mode=mode if mode != "missing" else None)
+    if root is not None:
+        for candidate in (
+            root / "ubuntu12_32" / "steam",
+            root / "steam.sh",
+        ):
+            if candidate.exists():
+                return str(candidate)
+
+    launch_command = get_steam_launch_command(mode)
+    if launch_command and os.path.isabs(launch_command[0]) and os.path.exists(launch_command[0]):
+        return launch_command[0]
+    return None
+
+
+def _steam_audit_target_class(steam_mode: str | None = None) -> int | None:
+    target_path = _steam_audit_target_path(steam_mode)
+    target_class = _elf_class(target_path)
+    if target_class:
+        return target_class
+    if sys.platform == "linux":
+        # Native Steam's bootstrap executable is commonly 32-bit even on x86_64 systems.
+        return 32
+    return None
+
+
+def _valid_ld_audit_pair(
+    slssteam_path: str | None,
+    library_inject_path: str | None,
+    expected_class: int | None = None,
+) -> bool:
+    sls_class = _elf_class(slssteam_path)
+    inject_class = _elf_class(library_inject_path)
+    if expected_class is None:
+        expected_class = _steam_audit_target_class()
+
+    if (
+        expected_class in (32, 64)
+        and sls_class == expected_class
+        and inject_class == expected_class
+    ):
+        return True
+
+    logger.warning(
+        "SLSsteam LD_AUDIT ignorado: bibliotecas incompatíveis "
+        "(esperado=%s-bit, SLSsteam.so=%s-bit, library-inject.so=%s-bit).",
+        expected_class or "desconhecido",
+        sls_class or "desconhecido",
+        inject_class or "desconhecido",
+    )
+    return False
+
+
 def find_steam_install():
     backend = get_platform_backend(sys.platform)
     steam_path = backend.find_steam_install()
@@ -148,6 +223,7 @@ def start_steam():
         elif sys.platform == "linux":
             steam_mode = detect_linux_steam_mode()
             launch_command = get_steam_launch_command(steam_mode)
+            target_class = _steam_audit_target_class(steam_mode)
             if not launch_command:
                 logger.warning("Could not determine how to launch Steam on Linux.")
                 return "FAILED"
@@ -157,11 +233,16 @@ def start_steam():
                 library_inject_path = _library_inject_so_path_cache
 
                 if not slssteam_path or not library_inject_path:
-                    detected_slssteam_path, detected_library_inject_path = find_slssteam_paths(steam_mode)
+                    detected_slssteam_path, detected_library_inject_path = find_slssteam_paths(
+                        steam_mode,
+                        expected_elf_class=target_class,
+                    )
                     slssteam_path = slssteam_path or detected_slssteam_path
                     library_inject_path = library_inject_path or detected_library_inject_path
 
-                if slssteam_path and library_inject_path:
+                if slssteam_path and library_inject_path and _valid_ld_audit_pair(
+                    slssteam_path, library_inject_path, expected_class=target_class
+                ):
                     logger.info("Launching Steam Flatpak with LD_AUDIT injection")
                     env = os.environ.copy()
                     # For Flatpak, we might need to pass the env through flatpak run --env
@@ -175,22 +256,30 @@ def start_steam():
                         # Standard is: flatpak run --env=KEY=VAL APP_ID
                         new_command = [launch_command[0], "run", f"--env=LD_AUDIT={audit_val}", FLATPAK_APP_ID]
                         logger.info("Flatpak injection command: %s", " ".join(new_command))
-                        subprocess.Popen(new_command)
+                        subprocess.Popen(
+                            new_command,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                     else:
                         env["LD_AUDIT"] = audit_val
-                        subprocess.Popen(launch_command, env=env)
+                        subprocess.Popen(
+                            launch_command,
+                            env=env,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                     return "SUCCESS"
                 
-                logger.warning("Launching Steam Flatpak without injection (libraries missing)")
-                subprocess.Popen(launch_command)
-                return "SUCCESS"
+                logger.warning("SLSsteam unavailable or incompatible for Flatpak Steam")
+                return "SLSSTEAM_INCOMPATIBLE"
 
             slssteam_path = _slssteam_so_path_cache
             library_inject_path = _library_inject_so_path_cache
 
             if not slssteam_path or not library_inject_path:
                 detected_slssteam_path, detected_library_inject_path = (
-                    find_slssteam_paths(steam_mode)
+                    find_slssteam_paths(steam_mode, expected_elf_class=target_class)
                 )
                 slssteam_path = slssteam_path or detected_slssteam_path
                 library_inject_path = (
@@ -199,8 +288,14 @@ def start_steam():
 
             # If we have both libraries, start with them
             if slssteam_path and library_inject_path:
-                if os.path.exists(slssteam_path) and os.path.exists(
-                    library_inject_path
+                if (
+                    os.path.exists(slssteam_path)
+                    and os.path.exists(library_inject_path)
+                    and _valid_ld_audit_pair(
+                        slssteam_path,
+                        library_inject_path,
+                        expected_class=target_class,
+                    )
                 ):
                     # Start Steam with both libraries
                     success = start_steam_with_slssteam(
@@ -213,9 +308,8 @@ def start_steam():
                         _slssteam_so_path_cache = None
                         _library_inject_so_path_cache = None
                     return success
-                else:
-                    logger.warning("Cached library paths no longer exist")
-                    return "MISSING_SLSSTEAM"
+                logger.warning("SLSsteam libraries missing or incompatible")
+                return "SLSSTEAM_INCOMPATIBLE"
             else:
                 # Missing one or both libraries
                 missing = []
@@ -229,6 +323,27 @@ def start_steam():
             return "FAILED"
     except (OSError, subprocess.SubprocessError) as e:
         logger.error(f"Failed to execute Steam: {e}", exc_info=True)
+        return "FAILED"
+
+
+def start_steam_plain():
+    """Start Steam without LD_AUDIT injection."""
+    if sys.platform == "win32":
+        launch_command = get_platform_backend("win32").get_steam_launch_command()
+    elif sys.platform == "linux":
+        launch_command = get_steam_launch_command(detect_linux_steam_mode())
+    else:
+        launch_command = None
+
+    if not launch_command:
+        return "FAILED"
+
+    try:
+        logger.info("Starting Steam without SLSsteam injection: %s", " ".join(launch_command))
+        subprocess.Popen(launch_command)
+        return "SUCCESS"
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error("Failed to start Steam without SLSsteam injection: %s", e, exc_info=True)
         return "FAILED"
 
 
@@ -254,6 +369,14 @@ def start_steam_with_slssteam(
         )
         return "NEEDS_USER_PATH"
 
+    expected_class = _steam_audit_target_class()
+    if not _valid_ld_audit_pair(
+        slssteam_path,
+        library_inject_path,
+        expected_class=expected_class,
+    ):
+        return "MISSING_SLSSTEAM"
+
     try:
         logger.info(
             f"Executing Steam with LD_AUDIT: {library_inject_path}:{slssteam_path}"
@@ -262,7 +385,12 @@ def start_steam_with_slssteam(
         env["LD_AUDIT"] = f"{library_inject_path}:{slssteam_path}"
         command = launch_command or get_steam_launch_command("native") or ["steam"]
         logger.info("Starting Steam command: %s", " ".join(command))
-        subprocess.Popen(command, env=env)
+        subprocess.Popen(
+            command,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return "SUCCESS"
     except (OSError, subprocess.SubprocessError) as e:
         logger.error(

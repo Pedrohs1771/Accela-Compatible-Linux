@@ -130,7 +130,7 @@ class SteamlessIntegration(QObject):
             )
 
             if exe_count == 0:
-                logger.warning(f"No .exe files found in {game_directory}")
+                logger.info(f"No .exe files found in {game_directory}")
                 logger.debug(f"First 10 files found: {all_files_found[:10]}")
             elif len(exe_files) == 0:
                 logger.warning(
@@ -150,7 +150,7 @@ class SteamlessIntegration(QObject):
             exe_files.sort(key=lambda x: x["priority"], reverse=True)
 
             if len(exe_files) == 0:
-                logger.warning(f"No executables found in {game_directory}")
+                logger.info(f"No executables found in {game_directory}")
             else:
                 logger.debug(
                     f"Found {len(exe_files)} executable(s) in {game_directory}"

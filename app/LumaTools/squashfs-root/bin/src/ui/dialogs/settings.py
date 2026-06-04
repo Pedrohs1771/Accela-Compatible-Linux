@@ -198,7 +198,7 @@ class MorrenusStatsWidget(QWidget):
 class SettingsDialog(QDialog):
     """Dialog for configuring application settings."""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: Optional[QWidget] = None, focus_section: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Configurações")
         self.setMinimumWidth(860)
@@ -206,6 +206,7 @@ class SettingsDialog(QDialog):
         self.resize(920, 760)
         self.settings = get_settings()
         self.main_window = parent
+        self.focus_section = focus_section
         self.accent_color = self.settings.value("accent_color", "#C06C84")
         self.main_layout = None
         self.tab_widget = None
@@ -294,6 +295,8 @@ class SettingsDialog(QDialog):
 
         logger.debug("Opening SettingsDialog.")
         self._setup_ui()
+        if self.focus_section == "ryuu":
+            QTimer.singleShot(0, self.focus_ryuu_integration)
 
     def _setup_ui(self) -> None:
         """Initialize the UI layout."""
@@ -351,6 +354,16 @@ class SettingsDialog(QDialog):
         self._create_tools_tab()
         self._create_audio_tab()
         self._create_style_tab()
+
+    def focus_ryuu_integration(self) -> None:
+        if not self.tab_widget or not self.ryuu_api_key_input:
+            return
+        for index in range(self.tab_widget.count()):
+            if self.tab_widget.tabText(index) == "Integrações":
+                self.tab_widget.setCurrentIndex(index)
+                break
+        self.ryuu_api_key_input.setFocus()
+        self.ryuu_api_key_input.selectAll()
 
     def _apply_dialog_readability_style(self) -> None:
         bg_color = self.settings.value("background_color", "#000000")

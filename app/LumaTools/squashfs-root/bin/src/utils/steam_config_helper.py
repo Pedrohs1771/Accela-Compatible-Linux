@@ -11,6 +11,68 @@ def _escape_vdf_value(value):
     return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _unescape_vdf_value(value):
+    value = str(value)
+    result = []
+    escaped = False
+    for char in value:
+        if escaped:
+            result.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        else:
+            result.append(char)
+    if escaped:
+        result.append("\\")
+    return "".join(result)
+
+
+def _split_overrides(value):
+    return [item.strip() for item in re.split(r"[;,]", value or "") if item.strip()]
+
+
+def _merge_launch_options(existing, desired):
+    existing = (existing or "").strip()
+    desired = (desired or "").strip()
+    if not existing:
+        return desired
+    if not desired:
+        return existing
+
+    wine_pattern = r'WINEDLLOVERRIDES="([^"]*)"'
+    existing_match = re.search(wine_pattern, existing)
+    desired_match = re.search(wine_pattern, desired)
+    if not existing_match or not desired_match:
+        return desired
+
+    merged_overrides = []
+    seen = set()
+    for item in _split_overrides(existing_match.group(1)) + _split_overrides(desired_match.group(1)):
+        key = item.split("=", 1)[0].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged_overrides.append(item)
+
+    merged = re.sub(
+        wine_pattern,
+        f'WINEDLLOVERRIDES="{";".join(merged_overrides)}"',
+        desired,
+        count=1,
+    )
+
+    existing_extra = re.sub(wine_pattern, "", existing, count=1).strip()
+    existing_extra = existing_extra.replace("%command%", "").strip()
+    if existing_extra and existing_extra not in merged:
+        if "%command%" in merged:
+            merged = merged.replace("%command%", f"{existing_extra} %command%", 1)
+        else:
+            merged = f"{merged} {existing_extra}".strip()
+
+    return merged
+
+
 def _find_matching_brace(content, open_brace_index):
     depth = 0
     in_string = False
@@ -53,7 +115,7 @@ def _find_vdf_block(content, key, start=0, end=None):
     return block_start, block_end
 
 
-def _replace_or_insert_launch_options(content, appid, safe_launch_options):
+def _replace_or_insert_launch_options(content, appid, launch_options):
     apps_block = _find_vdf_block(content, "apps")
     if not apps_block:
         steam_block = _find_vdf_block(content, "Steam")
@@ -111,6 +173,7 @@ def _replace_or_insert_launch_options(content, appid, safe_launch_options):
     app_block = _find_vdf_block(content, appid, apps_start, apps_end)
 
     if not app_block:
+        safe_launch_options = _escape_vdf_value(launch_options)
         insertion = (
             f'\n\t\t\t\t"{appid}"\n'
             "\t\t\t\t{\n"
@@ -124,13 +187,20 @@ def _replace_or_insert_launch_options(content, appid, safe_launch_options):
     launch_pattern = r'("LaunchOptions"\s*)"((?:\\.|[^"\\])*)"'
 
     if re.search(launch_pattern, app_content):
+        existing_match = re.search(launch_pattern, app_content)
+        existing_launch_options = (
+            _unescape_vdf_value(existing_match.group(2)) if existing_match else ""
+        )
+        merged_launch_options = _merge_launch_options(existing_launch_options, launch_options)
+        safe_launch_options = _escape_vdf_value(merged_launch_options)
         new_app_content = re.sub(
             launch_pattern,
-            rf'\1"{safe_launch_options}"',
+            lambda match: f'{match.group(1)}"{safe_launch_options}"',
             app_content,
             count=1,
         )
     else:
+        safe_launch_options = _escape_vdf_value(launch_options)
         open_brace_offset = app_content.find("{")
         new_app_content = (
             app_content[:open_brace_offset + 1]
@@ -155,8 +225,6 @@ def set_steam_launch_options(steam_root, appid, launch_options):
     if not os.path.exists(userdata_path):
         return False
 
-    safe_launch_options = _escape_vdf_value(launch_options)
-
     success = False
     for user_id in os.listdir(userdata_path):
         user_config_path = os.path.join(userdata_path, user_id, "config", "localconfig.vdf")
@@ -165,7 +233,7 @@ def set_steam_launch_options(steam_root, appid, launch_options):
                 with open(user_config_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
 
-                new_content, changed = _replace_or_insert_launch_options(content, appid, safe_launch_options)
+                new_content, changed = _replace_or_insert_launch_options(content, appid, launch_options)
                 if changed:
                     backup_path = f"{user_config_path}.lumatools-{int(time.time())}.bak"
                     shutil.copy2(user_config_path, backup_path)

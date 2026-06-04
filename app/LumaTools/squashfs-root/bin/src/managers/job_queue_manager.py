@@ -3,12 +3,17 @@ import sys
 import logging
 import time
 import threading
+from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, QTimer, QObject, pyqtSignal
 
 from core import steam_helpers
+from core.tasks.download_slssteam_task import DownloadSLSsteamTask
+from utils.helpers import get_base_path
 
 logger = logging.getLogger(__name__)
+
+SLSSTEAM_REPAIR_COOLDOWN_SECONDS = 24 * 60 * 60
 
 
 class JobQueueManager(QObject):
@@ -241,12 +246,36 @@ class JobQueueManager(QObject):
                 result = steam_helpers.start_steam()
 
                 if result == "MISSING_SLSSTEAM":
-                    self._show_message_safe(
-                        "SLSsteam não encontrado",
-                        "O Steam foi detectado, mas o SLSsteam não está instalado corretamente para esta instalação. "
-                        "Abra Configurações e use 'Instalar/atualizar SLSsteam' para corrigir.",
-                        "warning",
-                    )
+                    logger.warning("SLSsteam missing; attempting automatic repair.")
+                    repaired = self._repair_slssteam()
+                    if repaired and steam_helpers.start_steam() == "SUCCESS":
+                        logger.info("Steam started successfully after SLSsteam installation.")
+                    else:
+                        steam_helpers.start_steam_plain()
+                        self._show_slssteam_fallback_message(
+                            "SLSsteam não encontrado",
+                            "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam porque não há bibliotecas compatíveis instaladas.",
+                        )
+                elif result == "SLSSTEAM_INCOMPATIBLE":
+                    logger.warning("SLSsteam incompatible; attempting automatic repair.")
+                    repaired = self._repair_slssteam()
+                    if repaired:
+                        logger.info("Retrying Steam start after SLSsteam repair.")
+                        retry_result = steam_helpers.start_steam()
+                        if retry_result == "SUCCESS":
+                            logger.info("Steam started successfully after SLSsteam repair.")
+                        else:
+                            steam_helpers.start_steam_plain()
+                            self._show_slssteam_fallback_message(
+                                "SLSsteam incompatível",
+                                "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam porque as bibliotecas detectadas não combinam com o Steam.",
+                            )
+                    else:
+                        steam_helpers.start_steam_plain()
+                        self._show_slssteam_fallback_message(
+                            "SLSsteam incompatível",
+                            "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam para evitar erro ELFCLASS.",
+                        )
                 elif result == "SUCCESS":
                     logger.info("Steam started successfully with cached libraries.")
                 else:
@@ -282,6 +311,54 @@ class JobQueueManager(QObject):
 
         except Exception as e:
             logger.error(f"Error during Steam restart: {e}")
+
+    def _repair_slssteam(self) -> bool:
+        if self._slssteam_repair_on_cooldown():
+            logger.info("Skipping SLSsteam repair: cooldown is active.")
+            return False
+
+        try:
+            message = DownloadSLSsteamTask.install_latest_blocking()
+            logger.info("Automatic SLSsteam repair completed: %s", message)
+            repaired = bool(DownloadSLSsteamTask.installed_library_status().get("compatible"))
+            if repaired:
+                self._clear_slssteam_repair_marker()
+            return repaired
+        except Exception as exc:
+            logger.error("Automatic SLSsteam repair failed: %s", exc, exc_info=True)
+            self._write_slssteam_repair_marker()
+            return False
+
+    @staticmethod
+    def _slssteam_repair_marker() -> Path:
+        return get_base_path() / "slssteam_repair_failed_at"
+
+    def _slssteam_repair_on_cooldown(self) -> bool:
+        marker = self._slssteam_repair_marker()
+        try:
+            failed_at = float(marker.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return False
+        return time.time() - failed_at < SLSSTEAM_REPAIR_COOLDOWN_SECONDS
+
+    def _write_slssteam_repair_marker(self) -> None:
+        try:
+            self._slssteam_repair_marker().write_text(str(time.time()), encoding="utf-8")
+        except OSError:
+            logger.debug("Failed to write SLSsteam repair cooldown marker", exc_info=True)
+
+    def _clear_slssteam_repair_marker(self) -> None:
+        try:
+            self._slssteam_repair_marker().unlink(missing_ok=True)
+        except OSError:
+            logger.debug("Failed to clear SLSsteam repair cooldown marker", exc_info=True)
+
+    def _show_slssteam_fallback_message(self, title: str, detail: str) -> None:
+        self._show_message_safe(
+            title,
+            f"{detail}\n\nIsso não significa que o download falhou.",
+            "warning",
+        )
 
     def _show_message_box(self, title, text, level):
         parent = self.main_window if self.main_window and self.main_window.isVisible() else QApplication.activeWindow()

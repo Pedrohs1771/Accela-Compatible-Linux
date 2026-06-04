@@ -302,6 +302,21 @@ class GameLibraryDialog(QDialog):
 
         top_layout.addStretch()
 
+        source_label = QLabel("Fonte:")
+        top_layout.addWidget(source_label)
+
+        self.source_combo = QComboBox()
+        self.source_combo.addItem("Todos", "all")
+        self.source_combo.addItem("LumaTools", "lumatools")
+        self.source_combo.addItem("Steam", "steam")
+        if self.game_manager:
+            current_filter = getattr(self.game_manager, "source_filter", "all")
+            index = self.source_combo.findData(current_filter)
+            if index >= 0:
+                self.source_combo.setCurrentIndex(index)
+        self.source_combo.currentIndexChanged.connect(self._on_source_filter_changed)
+        top_layout.addWidget(self.source_combo)
+
         sort_label = QLabel("Ordenar por:")
         top_layout.addWidget(sort_label)
 
@@ -445,6 +460,11 @@ class GameLibraryDialog(QDialog):
 
     def _on_sort_changed(self) -> None:
         self._refresh_game_list()
+
+    def _on_source_filter_changed(self) -> None:
+        if not self.game_manager:
+            return
+        self.game_manager.set_source_filter(self.source_combo.currentData())
 
     @staticmethod
     def _get_sort_key(game, sort_option):
@@ -1104,6 +1124,14 @@ class GameLibraryDialog(QDialog):
         self.of_btn.setStyleSheet(f"border: 1px solid {self.accent_color};")
         layout.addWidget(self.of_btn)
 
+        self.ryuu_btn = QPushButton("Aplicar Ryuu Fix")
+        self.ryuu_btn.setToolTip("Baixa e aplica o fix Ryuu usando o jogo selecionado.")
+        layout.addWidget(self.ryuu_btn)
+
+        undo_fix_btn = QPushButton("Desfazer último fix")
+        undo_fix_btn.clicked.connect(lambda: self._undo_last_fix_for_game(game_data))
+        layout.addWidget(undo_fix_btn)
+
         def _on_of_click():
             from src.core.online_fix_api import OnlineFixAPI
             from src.core.online_fix_injector import OnlineFixInjector
@@ -1137,7 +1165,19 @@ class GameLibraryDialog(QDialog):
                     QMetaObject.invokeMethod(self, "_on_of_status", Qt.ConnectionType.QueuedConnection, Q_ARG(str, "Baixando fix..."))
                     if api.download_file(file_url, save_path):
                         QMetaObject.invokeMethod(self, "_on_of_status", Qt.ConnectionType.QueuedConnection, Q_ARG(str, "Injetando fix..."))
-                        if injector.inject_fix(path, save_path):
+                        success, found_dlls, launch_options, _ = injector.inject_fix(path, save_path)
+                        if success:
+                            try:
+                                from core.fix_planner import record_online_fix_layer
+                            except ImportError:
+                                from src.core.fix_planner import record_online_fix_layer
+                            record_online_fix_layer(
+                                path,
+                                appid=appid,
+                                game_name=name,
+                                found_dlls=found_dlls,
+                                launch_options=launch_options,
+                            )
                             QMetaObject.invokeMethod(self, "_on_of_success", Qt.ConnectionType.QueuedConnection, Q_ARG(str, "Fix Online aplicado com sucesso! Verifique o arquivo LUMA_ONLINE_FIX_INFO.txt na pasta do jogo."))
                         else:
                             QMetaObject.invokeMethod(self, "_on_of_error", Qt.ConnectionType.QueuedConnection, Q_ARG(str, "Falha ao injetar os arquivos do fix."))
@@ -1149,6 +1189,7 @@ class GameLibraryDialog(QDialog):
             self.executor.submit(_async_of)
 
         self.of_btn.clicked.connect(_on_of_click)
+        self.ryuu_btn.clicked.connect(lambda: self._apply_ryuu_fix_for_game(game_data))
 
         # Start background check
         self.executor.submit(self._check_goldberg_async, path)
@@ -1200,6 +1241,105 @@ class GameLibraryDialog(QDialog):
         self.of_btn.setText("Baixar Online Fix (Multiplayer)")
         self.of_btn.setEnabled(True)
         QMessageBox.warning(self, "Erro", msg)
+
+    def _apply_ryuu_fix_for_game(self, game_data: dict) -> None:
+        try:
+            from core.fix_planner import apply_ryuu_fix
+            from core.ryuu_client import RyuuClient, load_ryuu_auth_key
+        except ImportError:
+            from src.core.fix_planner import apply_ryuu_fix
+            from src.core.ryuu_client import RyuuClient, load_ryuu_auth_key
+
+        appid = str(game_data.get("appid", "")).strip()
+        path = game_data.get("install_path")
+        name = game_data.get("game_name", "Jogo")
+
+        if not appid.isdigit() or appid == "0" or not path:
+            QMessageBox.warning(self, "Ryuu Fix", "Não consegui identificar esse jogo.")
+            return
+
+        if not load_ryuu_auth_key():
+            QMessageBox.information(
+                self,
+                "Ryuu Fix",
+                "Ryuu não conectado. Cole sua chave em Configurações > Integrações.",
+            )
+            if self.main_window and hasattr(self.main_window, "open_settings"):
+                self.main_window.open_settings("ryuu")
+            return
+
+        self.ryuu_btn.setEnabled(False)
+        self.ryuu_btn.setText("Aplicando Ryuu Fix...")
+
+        def _async_ryuu():
+            try:
+                output_dir = Path(get_base_path()) / "ryuu_fixes"
+                fix_path = RyuuClient().download(appid, output_dir, branch="public")
+                result = apply_ryuu_fix(
+                    path,
+                    fix_path,
+                    appid=appid,
+                    game_name=name,
+                    branch="public",
+                    preserve_online_fix=True,
+                )
+                skipped = result.get("skipped_conflicts") or []
+                msg = (
+                    "Ryuu Fix aplicado. Arquivos protegidos do OnlineFix foram mantidos."
+                    if skipped
+                    else "Ryuu Fix aplicado."
+                )
+                QMetaObject.invokeMethod(
+                    self,
+                    "_on_ryuu_success",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, msg),
+                )
+            except Exception:
+                logger.exception("Falha ao aplicar Ryuu Fix pela biblioteca")
+                QMetaObject.invokeMethod(
+                    self,
+                    "_on_ryuu_error",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, "Não consegui baixar/aplicar o fix Ryuu. Verifique sua key ou tente novamente."),
+                )
+
+        self.executor.submit(_async_ryuu)
+
+    @pyqtSlot(str)
+    def _on_ryuu_success(self, msg: str):
+        self.ryuu_btn.setText("Ryuu Fix aplicado")
+        self.ryuu_btn.setEnabled(True)
+        QMessageBox.information(self, "Ryuu Fix", msg)
+
+    @pyqtSlot(str)
+    def _on_ryuu_error(self, msg: str):
+        self.ryuu_btn.setText("Aplicar Ryuu Fix")
+        self.ryuu_btn.setEnabled(True)
+        QMessageBox.warning(self, "Ryuu Fix", msg)
+
+    def _undo_last_fix_for_game(self, game_data: dict) -> None:
+        try:
+            from core.fix_planner import undo_last_fix
+        except ImportError:
+            from src.core.fix_planner import undo_last_fix
+
+        path = game_data.get("install_path")
+        if not path:
+            QMessageBox.warning(self, "Fixes", "Não consegui identificar a pasta do jogo.")
+            return
+
+        result = undo_last_fix(path)
+        restored = len(result.get("restored_files") or [])
+        removed = len(result.get("removed_files") or [])
+        if not restored and not removed:
+            QMessageBox.information(self, "Fixes", "Não há fix para desfazer.")
+            return
+        QMessageBox.information(
+            self,
+            "Fixes",
+            f"Rollback concluído. Restaurados: {restored}. Removidos: {removed}.",
+        )
 
     def _on_goldberg_check_complete(self, is_applied: bool) -> None:
         """Slot to update UI after background check."""

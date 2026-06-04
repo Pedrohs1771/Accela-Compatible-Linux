@@ -35,7 +35,7 @@ from utils.proton_tools import (
     build_default_proton_selection,
     clear_steam_compat_tool,
 )
-from utils.steam_manifest import get_game_directory, write_acf_file
+from utils.steam_manifest import get_game_directory, repair_installed_app_state, write_acf_file
 from utils.helpers import create_font_from_settings
 from utils.wrapper_metadata import persist_selected_dlcs
 from utils.yaml_config_manager import (
@@ -494,6 +494,11 @@ class CLITaskManager:
             )
             if acf_path:
                 self.logger.info(f"Created .acf file at {acf_path}")
+                appid = self.game_data.get("appid")
+                if appid:
+                    repair_installed_app_state(
+                        self.current_dest_path, appid, logger=self.logger
+                    )
         except OSError as e:
             self.logger.error(f"Error creating .acf file: {e}")
 
@@ -625,11 +630,12 @@ class CLITaskManager:
         if not appid:
             return
 
-        if not self.game_data.get("force_proton"):
+        force_online_fix_proton = self.game_data.get("apply_online_fix")
+        if not self.game_data.get("force_proton") and not force_online_fix_proton:
             clear_steam_compat_tool(appid)
             return
 
-        tool_name = self.game_data.get("proton_tool_name", "")
+        tool_name = self.game_data.get("proton_tool_name") or "proton_experimental"
         tool_display = self.game_data.get("proton_tool_display_name", tool_name)
         if not tool_name:
             self.logger.warning(

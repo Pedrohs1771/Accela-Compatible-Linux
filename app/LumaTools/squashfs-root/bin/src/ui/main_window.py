@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Luma Tools")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(800, 600)
+        self.setAcceptDrops(True)
         icon_path = Paths.resource("logo/icon.png")
         if icon_path.exists(): self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -235,7 +236,11 @@ class MainWindow(QMainWindow):
         self.exit_shortcut = QShortcut(QKeySequence("Ctrl+Q"), self)
         self.exit_shortcut.activated.connect(self.close)
 
-    def open_settings(self): SettingsDialog(self).exec()
+    def open_settings(self, focus_section: str = ""):
+        if not isinstance(focus_section, str):
+            focus_section = ""
+        SettingsDialog(self, focus_section=focus_section).exec()
+
     def open_game_library(self): GameLibraryDialog(self).exec()
     def open_fetch_dialog(self): FetchManifestDialog(self).exec()
     def open_ryuu_fixes(self): RyuuFixesDialog(self).exec()
@@ -243,6 +248,38 @@ class MainWindow(QMainWindow):
     def open_update_center(self): UpdateCenterDialog(self).exec()
     def open_credits_dialog(self): CreditsDialog(self).exec()
     def open_lain_minigame(self): LainMinigameDialog(self).exec()
+
+    def dragEnterEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path.lower().endswith(".zip"):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dropEvent(self, event):
+        added = 0
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path and path.lower().endswith(".zip") and os.path.exists(path):
+                self.add_job_safely(path)
+                added += 1
+
+        if added:
+            logger.info("Adicionado(s) %s ZIP(s) por arrastar e soltar.", added)
+            event.acceptProposedAction()
+            return
+
+        QMessageBox.warning(
+            self,
+            "Arquivo inválido",
+            "Arraste um arquivo .zip contendo .lua e .manifest.",
+        )
+        event.ignore()
     
     def reposition_titlebar(self, position): pass
     def update_gif_display(self, enabled): pass

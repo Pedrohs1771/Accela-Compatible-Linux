@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional
@@ -10,6 +11,9 @@ import requests
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.linux_paths import (
+    detect_linux_steam_mode,
+    find_primary_steam_root,
+    find_slssteam_paths,
     get_slssteam_install_dir,
     get_slssteam_setup_command,
     list_steam_roots,
@@ -47,6 +51,102 @@ class DownloadSLSsteamTask(QObject):
     def version_file(cls) -> Path:
         return cls.install_dir() / "VERSION"
 
+    @staticmethod
+    def _elf_class(path: str | None) -> int | None:
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            with open(path, "rb") as handle:
+                header = handle.read(5)
+        except OSError:
+            return None
+        if len(header) < 5 or header[:4] != b"\x7fELF":
+            return None
+        if header[4] == 1:
+            return 32
+        if header[4] == 2:
+            return 64
+        return None
+
+    @classmethod
+    def _target_elf_class(cls) -> int | None:
+        if sys.platform != "linux":
+            return None
+        steam_mode = detect_linux_steam_mode()
+        root = find_primary_steam_root(preferred_mode=steam_mode if steam_mode != "missing" else None)
+        if root is not None:
+            for candidate in (
+                root / "ubuntu12_32" / "steam",
+                root / "steam.sh",
+            ):
+                detected = cls._elf_class(str(candidate))
+                if detected:
+                    return detected
+        return 32
+
+    @classmethod
+    def installed_library_status(cls) -> Dict[str, object]:
+        target_class = cls._target_elf_class()
+        status: Dict[str, object] = {
+            "installed": cls.install_dir().exists(),
+            "compatible": False,
+            "slssteam_path": "",
+            "library_inject_path": "",
+            "slssteam_class": None,
+            "library_inject_class": None,
+            "target_class": target_class,
+        }
+        if sys.platform != "linux":
+            return status
+
+        steam_mode = detect_linux_steam_mode()
+        slssteam_path, library_inject_path = find_slssteam_paths(
+            steam_mode,
+            expected_elf_class=target_class,
+        )
+        status["slssteam_path"] = slssteam_path or ""
+        status["library_inject_path"] = library_inject_path or ""
+        status["slssteam_class"] = cls._elf_class(slssteam_path)
+        status["library_inject_class"] = cls._elf_class(library_inject_path)
+        status["compatible"] = (
+            target_class in (32, 64)
+            and status["slssteam_class"] == target_class
+            and status["library_inject_class"] == target_class
+        )
+        return status
+
+    @classmethod
+    def install_latest_blocking(cls) -> str:
+        temp_root = Path(tempfile.mkdtemp(prefix="lumatools-slssteam-"))
+        archive_path = temp_root / "SLSsteam-Any.7z"
+        extract_dir = temp_root / "extract"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            release = cls._fetch_latest_release()
+            asset = cls._pick_asset(release)
+            latest_version = release.get("tag_name", "").strip() or "unknown"
+
+            cls._download_asset_blocking(asset, archive_path)
+            cls._extract_archive(archive_path, extract_dir)
+            cls._run_setup(extract_dir)
+
+            cls.install_dir().mkdir(parents=True, exist_ok=True)
+            cls.version_file().write_text(f"{latest_version}\n", encoding="utf-8")
+
+            library_status = cls.installed_library_status()
+            if sys.platform == "linux" and not library_status.get("compatible"):
+                raise RuntimeError(
+                    "SLSsteam instalado, mas as bibliotecas não são compatíveis "
+                    f"(esperado={library_status.get('target_class')}, "
+                    f"SLSsteam.so={library_status.get('slssteam_class')}, "
+                    f"library-inject.so={library_status.get('library_inject_class')})."
+                )
+
+            return f"SLSsteam {latest_version} instalado em {cls.install_dir()}."
+        finally:
+            shutil.rmtree(temp_root, ignore_errors=True)
+
     @classmethod
     def check_update_available(cls) -> Dict[str, object]:
         status: Dict[str, object] = {
@@ -57,6 +157,7 @@ class DownloadSLSsteamTask(QObject):
             "steamclient_found": False,
             "steamclient_mismatch": None,
             "steamclient_error": False,
+            "libraries_compatible": cls.installed_library_status().get("compatible", False),
             "error": False,
         }
 
@@ -179,6 +280,19 @@ class DownloadSLSsteamTask(QObject):
                     if total > 0:
                         percent = 5 + int((downloaded / total) * 40)
                         self.progress_percentage.emit(min(percent, 45))
+
+    @staticmethod
+    def _download_asset_blocking(asset: dict, archive_path: Path) -> None:
+        url = asset.get("browser_download_url", "")
+        if not url:
+            raise RuntimeError("Release do SLSsteam sem URL de download.")
+
+        with requests.get(url, stream=True, timeout=120) as response:
+            response.raise_for_status()
+            with archive_path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 512):
+                    if chunk:
+                        handle.write(chunk)
 
     @staticmethod
     def _extract_archive(archive_path: Path, extract_dir: Path) -> None:

@@ -1,6 +1,8 @@
 import os
 import re
+import shutil
 import sys
+import time
 from typing import Any, Dict, Iterable, Optional
 
 
@@ -132,8 +134,21 @@ def build_acf_content(
         f'\t"name"\t\t"{game_data["game_name"]}"\n'
         f'\t"StateFlags"\t\t"4"\n'
         f'\t"installdir"\t\t"{install_folder_name}"\n'
+        f'\t"LastUpdated"\t\t"{int(time.time())}"\n'
+        f'\t"LastOwner"\t\t"0"\n'
         f'\t"SizeOnDisk"\t\t"{size_on_disk}"\n'
+        f'\t"StagingSize"\t\t"0"\n'
         f'\t"buildid"\t\t"{buildid}"\n'
+        f'\t"LastPlayed"\t\t"0"\n'
+        f'\t"UpdateResult"\t\t"0"\n'
+        f'\t"BytesToDownload"\t\t"0"\n'
+        f'\t"BytesDownloaded"\t\t"0"\n'
+        f'\t"BytesToStage"\t\t"0"\n'
+        f'\t"BytesStaged"\t\t"0"\n'
+        f'\t"TargetBuildID"\t\t"0"\n'
+        f'\t"AutoUpdateBehavior"\t\t"1"\n'
+        f'\t"AllowOtherDownloadsWhileRunning"\t\t"0"\n'
+        f'\t"ScheduledAutoUpdate"\t\t"0"\n'
         f"{installed_depots_str}"
     )
 
@@ -174,3 +189,67 @@ def write_acf_file(
         f.write(acf_content)
 
     return acf_path
+
+
+def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
+    if not dest_path or not appid:
+        return False
+
+    steamapps_dir = os.path.join(dest_path, "steamapps")
+    acf_path = os.path.join(steamapps_dir, f"appmanifest_{appid}.acf")
+    if not os.path.exists(acf_path):
+        return False
+
+    try:
+        with open(acf_path, "r", encoding="utf-8", errors="ignore") as handle:
+            content = handle.read()
+
+        replacements = {
+            "StateFlags": "4",
+            "UpdateResult": "0",
+            "BytesToDownload": "0",
+            "BytesDownloaded": "0",
+            "BytesToStage": "0",
+            "BytesStaged": "0",
+            "StagingSize": "0",
+            "TargetBuildID": "0",
+            "DownloadType": "0",
+            "ScheduledAutoUpdate": "0",
+            "AutoUpdateBehavior": "1",
+            "LastUpdated": str(int(time.time())),
+        }
+
+        for key, value in replacements.items():
+            pattern = rf'("{re.escape(key)}"\s*)"[^"]*"'
+            if re.search(pattern, content):
+                content = re.sub(
+                    pattern,
+                    lambda match: f'{match.group(1)}"{value}"',
+                    content,
+                    count=1,
+                )
+            else:
+                insert_at = content.rfind("}")
+                if insert_at != -1:
+                    content = (
+                        content[:insert_at]
+                        + f'\t"{key}"\t\t"{value}"\n'
+                        + content[insert_at:]
+                    )
+
+        shutil.copy2(acf_path, f"{acf_path}.lumatools-{int(time.time())}.bak")
+        with open(acf_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+        for folder in ("downloading", "temp"):
+            path = os.path.join(steamapps_dir, folder, str(appid))
+            if os.path.exists(path):
+                shutil.rmtree(path, ignore_errors=True)
+
+        if logger:
+            logger.info("Steam appmanifest reparado para AppID %s", appid)
+        return True
+    except OSError as exc:
+        if logger:
+            logger.warning("Falha ao reparar appmanifest %s: %s", acf_path, exc)
+        return False

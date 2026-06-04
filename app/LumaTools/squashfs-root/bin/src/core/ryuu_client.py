@@ -98,9 +98,14 @@ class RyuuClient:
         return response.text.strip() or "Pedido de branch enviado."
 
     def test_key(self) -> bool:
-        # Lightweight authenticated request. A 404 for a missing file would still
-        # prove auth reached the service, but invalid auth should be 401/403.
-        self._get("/requestupdate", params={"appid": "480", "branch": "public"})
+        # Passive validation only. Do not call request/update endpoints just to
+        # test credentials, because those endpoints can create server-side work.
+        if not self.auth_key:
+            raise RyuuClientError("Configure sua auth_key do Ryuu primeiro.")
+        if len(self.auth_key) < 12:
+            raise RyuuClientError("Auth key Ryuu curta demais.")
+        if any(ch.isspace() for ch in self.auth_key):
+            raise RyuuClientError("Auth key Ryuu não pode conter espaços.")
         return True
 
 
