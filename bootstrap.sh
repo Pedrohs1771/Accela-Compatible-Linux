@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_SLUG="${LUMATOOLS_REPO:-Pedrohs1771/Luma-Tools}"
 WORK_DIR="${LUMATOOLS_BOOTSTRAP_DIR:-${XDG_DOWNLOAD_DIR:-$HOME/Downloads}/LumaTools-Install}"
-API_URL="https://api.github.com/repos/$REPO_SLUG/releases?per_page=20"
+API_URL="https://api.github.com/repos/$REPO_SLUG/releases/latest"
 
 log() {
     printf '[LumaTools bootstrap] %s\n' "$1"
@@ -87,12 +87,12 @@ main() {
     releases_json="$WORK_DIR/releases.json"
     archive="$WORK_DIR/LumaTools-Linux.zip"
 
-    log "Consultando releases em $REPO_SLUG..."
+    log "Consultando a release mais recente em $REPO_SLUG..."
     download_to_file "$API_URL" "$releases_json"
 
     asset_url="$(pick_asset_url "$releases_json" || true)"
     if [ -z "$asset_url" ]; then
-        die "Não encontrei asset Linux .zip na última release."
+        die "Não encontrei asset Linux .zip na release mais recente."
     fi
 
     log "Baixando pacote Linux completo..."

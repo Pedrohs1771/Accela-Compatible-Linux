@@ -1,18 +1,18 @@
 {
-  "version": "v1.0.8",
-  "display_name": "Luma Tools v1.0.8",
+  "version": "v1.0.9",
+  "display_name": "Luma Tools Linux v1.0.9",
   "channel": "stable",
-  "commit_sha": "d2d5a1a8be8f2a1e5c4104feaaecdf975caa72c6",
-  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip",
-  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip.sha256",
+  "commit_sha": "fb09718110c1cb324fff3dfa7c74d19e0681f001",
+  "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip",
+  "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip.sha256",
   "signature_url": "",
-  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.8",
+  "html_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/tag/v1.0.9",
   "published_at": "2026-06-03T21:05:00-03:00",
   "notes": "Instalação plug and play via bootstrap, Ryuu Fixes nas integrações e fallback robusto de extração para Online-Fix.",
   "platforms": {
     "linux-x64": {
-      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip",
-      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.8/LumaTools-Linux-v1.0.8.zip.sha256",
+      "package_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip",
+      "sha256_url": "https://github.com/Pedrohs1771/Luma-Tools/releases/download/v1.0.9/LumaTools-Linux-v1.0.9.zip.sha256",
       "signature_url": ""
     },
     "windows-x64": {

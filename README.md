@@ -47,7 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
 ```
 
 ### Linux / Steam Deck (Terminal)
-Open your favorite terminal and paste this one-liner. It downloads the newest Linux release package first, then runs the local installer:
+Open your favorite terminal and paste this one-liner. It always resolves the latest Linux release from GitHub Releases, then runs the local installer:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash
 ```
@@ -73,7 +73,7 @@ bash install.sh --fix-all
 
 Linux stable:
 ```text
-LumaTools-Linux-v1.0.8.zip
+Always fetched automatically by bootstrap.sh from the latest GitHub release.
 ```
 
 Windows beta:
