@@ -410,7 +410,7 @@ collect_missing_deps() {
         missing_deps+=("git")
     fi
 
-    if ! need_cmd rclone && [ ! -x "$APP_SOURCE/tools/rclone/rclone" ]; then
+    if ! need_cmd rclone && [ ! -f "$APP_SOURCE/tools/rclone/rclone" ]; then
         missing_deps+=("rclone")
     fi
 }
@@ -701,6 +701,9 @@ sync_tree() {
 
     rsync -a --delete --exclude '.venv' "$APP_SOURCE/squashfs-root/" "$DEST_DIR/squashfs-root/"
     rsync -a --delete "$APP_SOURCE/tools/" "$DEST_DIR/tools/"
+    if [ -f "$DEST_DIR/tools/rclone/rclone" ]; then
+        chmod +x "$DEST_DIR/tools/rclone/rclone" || true
+    fi
 
     if [ -d "$ROOT_DIR/release" ]; then
         rsync -a --delete "$ROOT_DIR/release/" "$DEST_DIR/release/"
