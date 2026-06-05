@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import psutil
+import shutil
 import subprocess
 import re
 
@@ -94,6 +95,46 @@ def _valid_ld_audit_pair(
         inject_class or "desconhecido",
     )
     return False
+
+
+def _flatpak_slssteam_override_ready(
+    slssteam_path: str | None = None,
+    library_inject_path: str | None = None,
+) -> bool:
+    """Return True when the official SLSsteam Flatpak override is installed.
+
+    SLSsteam's Flatpak installer intentionally uses Flatpak's
+    libshared-library-guard in front of the 32-bit SLSsteam libraries. Starting
+    Flatpak with our own --env=LD_AUDIT=... bypasses that guard and makes 64-bit
+    helper processes fail with ELFCLASS32. For Flatpak, the override is the
+    source of truth; Luma must not replace it at launch time.
+    """
+    if shutil.which("flatpak") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["flatpak", "override", "--user", "--show", FLATPAK_APP_ID],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+    output = result.stdout or ""
+    if "SHARED_LIBRARY_GUARD=0" not in output:
+        return False
+    if "LD_AUDIT=" not in output or "libshared-library-guard.so" not in output:
+        return False
+    if "SLSsteam.so" not in output or "library-inject.so" not in output:
+        return False
+    if slssteam_path and str(slssteam_path) not in output:
+        logger.debug("Flatpak SLSsteam override points to a different SLSsteam.so")
+    if library_inject_path and str(library_inject_path) not in output:
+        logger.debug("Flatpak SLSsteam override points to a different library-inject.so")
+    return True
 
 
 def find_steam_install():
@@ -278,44 +319,27 @@ def start_steam():
                 if not slssteam_path or not library_inject_path:
                     detected_slssteam_path, detected_library_inject_path = find_slssteam_paths(
                         steam_mode,
-                        expected_elf_class=target_class,
                     )
                     slssteam_path = slssteam_path or detected_slssteam_path
                     library_inject_path = library_inject_path or detected_library_inject_path
 
-                if slssteam_path and library_inject_path and _valid_ld_audit_pair(
-                    slssteam_path, library_inject_path, expected_class=target_class
+                if (
+                    slssteam_path
+                    and library_inject_path
+                    and _flatpak_slssteam_override_ready(slssteam_path, library_inject_path)
                 ):
-                    logger.info("Launching Steam Flatpak with LD_AUDIT injection")
-                    env = os.environ.copy()
-                    # For Flatpak, we might need to pass the env through flatpak run --env
-                    # However, if we're running inside the flatpak environment already, this is easier.
-                    # If we're on the host, we use: flatpak run --env=LD_AUDIT=...
-                    audit_val = f"{library_inject_path}:{slssteam_path}"
-                    
-                    # Check if we should use --env flag for flatpak
-                    if launch_command[0] == "flatpak":
-                        # Insert --env before 'run' or after 'run'
-                        # Standard is: flatpak run --env=KEY=VAL APP_ID
-                        new_command = [launch_command[0], "run", f"--env=LD_AUDIT={audit_val}", FLATPAK_APP_ID]
-                        logger.info("Flatpak injection command: %s", " ".join(new_command))
-                        subprocess.Popen(
-                            new_command,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                        )
-                    else:
-                        env["LD_AUDIT"] = audit_val
-                        subprocess.Popen(
-                            launch_command,
-                            env=env,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                        )
+                    logger.info(
+                        "Launching Steam Flatpak with official SLSsteam Flatpak override"
+                    )
+                    subprocess.Popen(
+                        launch_command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                     return "SUCCESS"
                 
-                logger.warning("SLSsteam unavailable or incompatible for Flatpak Steam")
-                return "SLSSTEAM_INCOMPATIBLE"
+                logger.warning("SLSsteam Flatpak override missing or incomplete")
+                return "MISSING_SLSSTEAM"
 
             slssteam_path = _slssteam_so_path_cache
             library_inject_path = _library_inject_so_path_cache

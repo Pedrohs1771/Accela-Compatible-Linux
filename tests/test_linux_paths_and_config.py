@@ -92,8 +92,8 @@ class SLSsteamConfigPathTests(unittest.TestCase):
                 / ".var"
                 / "app"
                 / linux_paths.FLATPAK_APP_ID
-                / "config"
-                / "slssteam"
+                / ".config"
+                / "SLSsteam"
                 / "config.yaml"
             )
             with (
@@ -110,7 +110,7 @@ class SLSsteamConfigPathTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            expected = home / "snap" / "steam" / "common" / ".config" / "slssteam" / "config.yaml"
+            expected = home / "snap" / "steam" / "common" / ".config" / "SLSsteam" / "config.yaml"
             with (
                 mock.patch("pathlib.Path.home", return_value=home),
                 mock.patch.object(linux_paths, "detect_linux_steam_mode", return_value="snap"),

@@ -73,6 +73,10 @@ class DownloadSLSsteamTask(QObject):
         if sys.platform != "linux":
             return None
         steam_mode = detect_linux_steam_mode()
+        if steam_mode == "flatpak":
+            # Flatpak SLSsteam is mediated by libshared-library-guard through a
+            # Flatpak override, so a simple host ELF class comparison is wrong.
+            return None
         root = find_primary_steam_root(preferred_mode=steam_mode if steam_mode != "missing" else None)
         if root is not None:
             for candidate in (
@@ -86,6 +90,7 @@ class DownloadSLSsteamTask(QObject):
 
     @classmethod
     def installed_library_status(cls) -> Dict[str, object]:
+        steam_mode = detect_linux_steam_mode()
         target_class = cls._target_elf_class()
         status: Dict[str, object] = {
             "installed": cls.install_dir().exists(),
@@ -95,11 +100,12 @@ class DownloadSLSsteamTask(QObject):
             "slssteam_class": None,
             "library_inject_class": None,
             "target_class": target_class,
+            "steam_mode": steam_mode,
+            "flatpak_override_ready": False,
         }
         if sys.platform != "linux":
             return status
 
-        steam_mode = detect_linux_steam_mode()
         slssteam_path, library_inject_path = find_slssteam_paths(
             steam_mode,
             expected_elf_class=target_class,
@@ -108,6 +114,18 @@ class DownloadSLSsteamTask(QObject):
         status["library_inject_path"] = library_inject_path or ""
         status["slssteam_class"] = cls._elf_class(slssteam_path)
         status["library_inject_class"] = cls._elf_class(library_inject_path)
+
+        if steam_mode == "flatpak":
+            override_ready = cls._flatpak_override_ready(
+                slssteam_path,
+                library_inject_path,
+            )
+            status["flatpak_override_ready"] = override_ready
+            status["compatible"] = bool(
+                slssteam_path and library_inject_path and override_ready
+            )
+            return status
+
         status["compatible"] = (
             target_class in (32, 64)
             and status["slssteam_class"] == target_class
@@ -348,3 +366,35 @@ class DownloadSLSsteamTask(QObject):
             if candidate.exists():
                 return candidate
         return None
+
+    @staticmethod
+    def _flatpak_override_ready(
+        slssteam_path: str | None = None,
+        library_inject_path: str | None = None,
+    ) -> bool:
+        if shutil.which("flatpak") is None:
+            return False
+        try:
+            result = subprocess.run(
+                ["flatpak", "override", "--user", "--show", "com.valvesoftware.Steam"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+        output = result.stdout or ""
+        if "SHARED_LIBRARY_GUARD=0" not in output:
+            return False
+        if "LD_AUDIT=" not in output or "libshared-library-guard.so" not in output:
+            return False
+        if "SLSsteam.so" not in output or "library-inject.so" not in output:
+            return False
+        if slssteam_path and str(slssteam_path) not in output:
+            return False
+        if library_inject_path and str(library_inject_path) not in output:
+            return False
+        return True

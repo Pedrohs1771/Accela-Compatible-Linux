@@ -149,16 +149,68 @@ def _default_slssteam_config() -> str:
         "GameTitles:\n"
         "SubscriptionTimestamps:\n"
         "DenuvoGames:\n"
-        "SafeMode: yes\n"
-        "Notifications: yes\n"
+        "SafeMode: no\n"
+        "SafeModeHashes:\n"
+        "Notifications: no\n"
         "WarnHashMissmatch: no\n"
-        "NotifyInit: yes\n"
+        "NotifyInit: no\n"
         "API: yes\n"
         "DisableCloud: yes\n"
         'FakeEmail: ""\n'
         "FakeWalletBalance: 0\n"
         "LogLevel: 0\n"
+        "ExtendedLogging: no\n"
     )
+
+
+_SLSSTEAM_REQUIRED_KEYS: tuple[tuple[str, str], ...] = (
+    ("DisableFamilyShareLock", "DisableFamilyShareLock: yes\n"),
+    ("UseWhitelist", "UseWhitelist: no\n"),
+    ("AutoFilterList", "AutoFilterList: yes\n"),
+    ("AppIds", "AppIds:\n"),
+    ("PlayNotOwnedGames", "PlayNotOwnedGames: yes\n"),
+    ("AdditionalApps", "AdditionalApps:\n"),
+    ("DlcData", "DlcData:\n"),
+    ("AppTokens", "AppTokens:\n"),
+    ("FakeOffline", "FakeOffline:\n"),
+    ("FakeAppIds", "FakeAppIds:\n"),
+    ("IdleStatus", 'IdleStatus:\n  AppId: 0\n  Title: ""\n'),
+    ("GameTitles", "GameTitles:\n"),
+    ("SubscriptionTimestamps", "SubscriptionTimestamps:\n"),
+    ("DenuvoGames", "DenuvoGames:\n"),
+    ("SafeMode", "SafeMode: no\n"),
+    ("SafeModeHashes", "SafeModeHashes:\n"),
+    ("Notifications", "Notifications: no\n"),
+    ("WarnHashMissmatch", "WarnHashMissmatch: no\n"),
+    ("NotifyInit", "NotifyInit: no\n"),
+    ("API", "API: yes\n"),
+    ("DisableCloud", "DisableCloud: yes\n"),
+    ("FakeEmail", 'FakeEmail: ""\n'),
+    ("FakeWalletBalance", "FakeWalletBalance: 0\n"),
+    ("LogLevel", "LogLevel: 0\n"),
+    ("ExtendedLogging", "ExtendedLogging: no\n"),
+)
+
+
+def _ensure_slssteam_required_keys(config_path: Path) -> bool:
+    try:
+        content = config_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+    additions: list[str] = []
+    for key, snippet in _SLSSTEAM_REQUIRED_KEYS:
+        if not re.search(rf"^{re.escape(key)}\s*:", content, re.MULTILINE):
+            additions.append(snippet)
+
+    if not additions:
+        return True
+
+    new_content = content.rstrip() + "\n" + "".join(additions)
+    if _atomic_write(config_path, new_content):
+        logger.info("Added missing SLSsteam config keys to %s", config_path)
+        return True
+    return False
 
 
 def ensure_slssteam_config(config_path: Optional[Path] = None) -> bool:
@@ -168,7 +220,18 @@ def ensure_slssteam_config(config_path: Optional[Path] = None) -> bool:
 
     config_path = config_path or get_user_config_path()
     if config_path.exists():
-        return True
+        return _ensure_slssteam_required_keys(config_path)
+
+    for legacy_path in _legacy_slssteam_config_paths(config_path):
+        if legacy_path.exists():
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_path, config_path)
+            logger.info(
+                "Migrated legacy SLSsteam config from %s to %s",
+                legacy_path,
+                config_path,
+            )
+            return _ensure_slssteam_required_keys(config_path)
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if _atomic_write(config_path, _default_slssteam_config()):
@@ -250,37 +313,50 @@ def get_user_config_path() -> Path:
     if mode == "flatpak":
         # Return the Flatpak path even before config.yaml exists. Falling back
         # to ~/.config/slssteam would write a valid config for the wrong Steam.
-        primary = (
-            Path.home()
-            / ".var"
-            / "app"
-            / "com.valvesoftware.Steam"
-            / "config"
-            / "slssteam"
-            / "config.yaml"
-        )
-        legacy = (
+        return (
             Path.home()
             / ".var"
             / "app"
             / "com.valvesoftware.Steam"
             / ".config"
-            / "slssteam"
+            / "SLSsteam"
             / "config.yaml"
         )
-        return legacy if legacy.exists() and not primary.exists() else primary
 
     if mode == "snap":
-        return Path.home() / "snap" / "steam" / "common" / ".config" / "slssteam" / "config.yaml"
+        return Path.home() / "snap" / "steam" / "common" / ".config" / "SLSsteam" / "config.yaml"
 
-    # Native/Standard SLSsteam typically looks for config.yaml in ~/.config/slssteam/
+    # Native/Standard SLSsteam looks for config.yaml in ~/.config/SLSsteam/.
     xdg_config_home_str = os.environ.get("XDG_CONFIG_HOME", "")
     if xdg_config_home_str:
-        config_dir = Path(xdg_config_home_str).expanduser() / "slssteam"
+        config_dir = Path(xdg_config_home_str).expanduser() / "SLSsteam"
     else:
-        config_dir = Path.home() / ".config" / "slssteam"
+        config_dir = Path.home() / ".config" / "SLSsteam"
 
     return config_dir / "config.yaml"
+
+
+def _legacy_slssteam_config_paths(primary: Path) -> list[Path]:
+    home = Path.home()
+    candidates = [
+        home / ".config" / "slssteam" / "config.yaml",
+        home
+        / ".var"
+        / "app"
+        / "com.valvesoftware.Steam"
+        / "config"
+        / "slssteam"
+        / "config.yaml",
+        home
+        / ".var"
+        / "app"
+        / "com.valvesoftware.Steam"
+        / ".config"
+        / "slssteam"
+        / "config.yaml",
+        home / "snap" / "steam" / "common" / ".config" / "slssteam" / "config.yaml",
+    ]
+    return [candidate for candidate in candidates if candidate != primary]
 
 
 def _get_section_start(content: str, pattern: re.Pattern) -> Optional[int]:
