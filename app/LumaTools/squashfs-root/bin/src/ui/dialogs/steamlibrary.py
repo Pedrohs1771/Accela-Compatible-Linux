@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtWidgets import (
     QDialog,
     QListWidget,
@@ -40,9 +40,11 @@ class SteamLibraryDialog(QDialog):
         self.list_widget.setUniformItemSizes(True)
         self.list_widget.setSpacing(2)
 
-        # Populate list with sorted paths
-        for path in sorted(library_paths):
-            item = QListWidgetItem(path)
+        # Keep backend order intact. On Linux this puts the library belonging
+        # to the currently running Steam mode (native/Flatpak/Snap) first.
+        for index, path in enumerate(library_paths):
+            item = QListWidgetItem(self._display_path(path, index))
+            item.setData(Qt.ItemDataRole.UserRole, path)
             # Explicitly set size hint to prevent overlap
             item.setSizeHint(QSize(0, 24))
             self.list_widget.addItem(item)
@@ -68,10 +70,21 @@ class SteamLibraryDialog(QDialog):
             QMessageBox.warning(self, "Nenhuma seleção", "Selecione uma pasta de biblioteca.")
             return
 
-        self.selected_path = current_item.text()
+        self.selected_path = current_item.data(Qt.ItemDataRole.UserRole) or current_item.text()
         logger.info(f"User selected Steam library: {self.selected_path}")
         super().accept()
 
     def get_selected_path(self) -> Optional[str]:
         """Return the selected library path."""
         return self.selected_path
+
+    @staticmethod
+    def _display_path(path: str, index: int) -> str:
+        label = "Steam em uso" if index == 0 else "biblioteca extra"
+        if "/.var/app/com.valvesoftware.Steam/" in path:
+            label += " / Flatpak"
+        elif "/snap/steam/" in path:
+            label += " / Snap"
+        else:
+            label += " / Native"
+        return f"{path}  [{label}]"
