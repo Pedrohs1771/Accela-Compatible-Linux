@@ -28,6 +28,7 @@ from core.tasks.process_zip_task import ProcessZipTask
 from core.tasks.steamless_task import SteamlessTask
 from core.auto_fix_backend import auto_fix_install_state
 from core.fix_planner import apply_ryuu_fix, record_online_fix_layer
+from core.online_fix_doctor import repair_online_fix
 from core.ryuu_client import RyuuClient, RyuuClientError, load_ryuu_auth_key
 
 from utils.helpers import get_base_path
@@ -756,6 +757,43 @@ class TaskManager(QObject):
                                 self._launch_options_status = "error"
                                 self._launch_options_status_text = "Falhou"
                                 logger.warning("Não foi possível configurar Launch Options automaticamente. O usuário deverá fazer manualmente.")
+
+                    appid = self.game_data.get("appid")
+                    if appid:
+                        online_repair = repair_online_fix(
+                            appid,
+                            library_path=self.current_dest_path,
+                            game_data=self.game_data,
+                            auto=True,
+                            restart_steam=True,
+                            launch_options_override=launch_options,
+                            proton_tool_override=self.game_data.get("proton_tool_name", ""),
+                            logger_override=logger,
+                        )
+                        if online_repair.status == "ok":
+                            self._online_fix_status = "ok"
+                            self._online_fix_status_text = "Validado"
+                        elif online_repair.status == "warning":
+                            self._online_fix_status = "warning"
+                            self._online_fix_status_text = "Aviso"
+                            logger.warning(
+                                "Online-Fix Doctor warning for AppID %s: %s",
+                                appid,
+                                "; ".join(online_repair.warnings),
+                            )
+                        else:
+                            self._online_fix_status = "error"
+                            self._online_fix_status_text = "Falhou"
+                            logger.error(
+                                "Online-Fix Doctor failed for AppID %s: %s",
+                                appid,
+                                "; ".join(online_repair.errors),
+                            )
+                        logger.info(
+                            "Online-Fix Doctor report for AppID %s: %s",
+                            appid,
+                            online_repair.report_path,
+                        )
                 else:
                     logger.error("Falha ao injetar o Online-Fix.")
             else:
