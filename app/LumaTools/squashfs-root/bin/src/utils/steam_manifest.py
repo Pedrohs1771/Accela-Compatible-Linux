@@ -8,6 +8,18 @@ from typing import Any, Dict, Iterable, Optional
 
 
 _EMPTY_PLATFORM_CONFIG = '\t"UserConfig"\n\t{\n\t}\n\t"MountedConfig"\n\t{\n\t}'
+_WINDOWS_ON_LINUX_PLATFORM_CONFIG = (
+    '\t"UserConfig"\n'
+    "\t{\n"
+    '\t\t"platform_override_dest"\t\t"linux"\n'
+    '\t\t"platform_override_source"\t\t"windows"\n'
+    "\t}\n"
+    '\t"MountedConfig"\n'
+    "\t{\n"
+    '\t\t"platform_override_dest"\t\t"linux"\n'
+    '\t\t"platform_override_source"\t\t"windows"\n'
+    "\t}"
+)
 
 
 def sanitize_game_name(game_name: str) -> str:
@@ -283,6 +295,8 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
             computed_size = _compute_directory_size(game_dir)
             if computed_size > 0 and (not size_on_disk.isdigit() or int(size_on_disk) <= 0):
                 size_on_disk = str(computed_size)
+            if _should_force_windows_platform_config(game_dir):
+                content = _ensure_windows_platform_config(content)
 
         replacements = {
             "StateFlags": "4",
@@ -387,6 +401,59 @@ def _compute_directory_size(path: Path) -> int:
             except OSError:
                 continue
     return total
+
+
+def _should_force_windows_platform_config(game_dir: Path) -> bool:
+    if sys.platform != "linux" or not game_dir.is_dir():
+        return False
+
+    # Online-Fix and Windows DLL override flows require the Windows build under
+    # Proton. Without this ACF override, Steam can try to mount Linux depots
+    # for the app and mark it as Update Required.
+    if (game_dir / "LUMA_ONLINE_FIX_INFO.txt").exists():
+        return True
+
+    has_windows_entrypoint = any(game_dir.glob("*.exe"))
+    has_native_entrypoint = any(
+        child.is_file()
+        and os.access(child, os.X_OK)
+        and child.suffix.lower() not in {".exe", ".dll"}
+        for child in game_dir.iterdir()
+    )
+    return has_windows_entrypoint and not has_native_entrypoint
+
+
+def _ensure_windows_platform_config(content: str) -> str:
+    if (
+        '"platform_override_source"\t\t"windows"' in content
+        or re.search(r'"platform_override_source"\s*"windows"', content)
+    ):
+        return content
+
+    content = re.sub(
+        r'\n\t"UserConfig"\s*\{\s*\}\s*\n\t"MountedConfig"\s*\{\s*\}\s*',
+        "\n" + _WINDOWS_ON_LINUX_PLATFORM_CONFIG + "\n",
+        content,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if (
+        '"platform_override_source"\t\t"windows"' in content
+        or re.search(r'"platform_override_source"\s*"windows"', content)
+    ):
+        return content
+
+    insert_at = content.rfind("\n}")
+    if insert_at == -1:
+        insert_at = content.rfind("}")
+    if insert_at == -1:
+        return content + "\n" + _WINDOWS_ON_LINUX_PLATFORM_CONFIG + "\n"
+    return (
+        content[:insert_at]
+        + "\n"
+        + _WINDOWS_ON_LINUX_PLATFORM_CONFIG
+        + content[insert_at:]
+    )
 
 
 def detect_recent_decryption_key_issue(

@@ -113,6 +113,33 @@ class SteamManifestRepairTests(unittest.TestCase):
                 detect_recent_decryption_key_issue(library, "777"),
             )
 
+    def test_onlinefix_windows_game_gets_proton_platform_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            steamapps = library / "steamapps"
+            game_dir = steamapps / "common" / "Left 4 Dead 2"
+            game_dir.mkdir(parents=True)
+            (game_dir / ".LumaTools").write_text("", encoding="utf-8")
+            (game_dir / "LUMA_ONLINE_FIX_INFO.txt").write_text(
+                'Launch Options:\nWINEDLLOVERRIDES="winmm=n,b" %command%\n',
+                encoding="utf-8",
+            )
+            (game_dir / "Launcher.exe").write_bytes(b"MZ")
+            manifest = self._write_manifest(
+                steamapps,
+                "550",
+                "Left 4 Dead 2",
+                "Left 4 Dead 2",
+            )
+
+            result = repair_lumatools_library_manifests([str(library)])
+
+            self.assertEqual(result["repaired"], ["550"])
+            text = manifest.read_text(encoding="utf-8")
+            self.assertIn('"platform_override_dest"\t\t"linux"', text)
+            self.assertIn('"platform_override_source"\t\t"windows"', text)
+            self.assertIn('"StateFlags"\t\t"4"', text)
+
     def test_skips_unmanaged_games(self):
         with tempfile.TemporaryDirectory() as tmp:
             library = Path(tmp)
