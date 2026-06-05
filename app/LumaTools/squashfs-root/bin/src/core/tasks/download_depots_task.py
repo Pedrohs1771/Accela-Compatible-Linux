@@ -29,6 +29,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DOWNLOADS = 8
 MAX_SAFE_DOWNLOADS = 32
 
+ENCRYPTED_CONTENT_PATTERNS = (
+    "content still encrypted",
+    "still encrypted",
+    "missing decryption key",
+    "unable to get depot decryption key",
+    "no decryption key",
+    "depot encrypted",
+)
+
 
 class DownloadDepotsTask(QObject):
     """
@@ -60,6 +69,9 @@ class DownloadDepotsTask(QObject):
         self.skipped_depots: List[str] = []
         self.return_codes: Dict[str, int] = {}
         self.last_error_reason = ""
+        self.encrypted_content_detected = False
+        self._current_depot_encrypted = False
+        self._current_depot_id = ""
         self._download_file_line_regex = re.compile(
             r"^\d{1,3}(?:\.\d{1,2})?%\s+(?:/|[A-Za-z]:\\|\\\\)"
         )
@@ -119,6 +131,8 @@ class DownloadDepotsTask(QObject):
                 depot_id = current_cmd[
                     5
                 ]  # 'dotnet', 'dll', '-app', 'id', '-depot', 'id'
+                self._current_depot_id = str(depot_id)
+                self._current_depot_encrypted = False
                 self.current_depot_size = depot_sizes[i]
 
                 self.progress.emit(
@@ -160,6 +174,22 @@ class DownloadDepotsTask(QObject):
                     return_code = self.process.poll()
                     self.process = None
 
+                if self._current_depot_encrypted:
+                    msg = (
+                        "ERROR: Depot content is encrypted or unsupported for "
+                        f"depot {depot_id}."
+                    )
+                    self.progress.emit(msg)
+                    logger.error(msg)
+                    self.return_codes[str(depot_id)] = int(return_code or 1)
+                    self.failed_depots.append(
+                        {
+                            "depot_id": str(depot_id),
+                            "return_code": int(return_code or 1),
+                            "status": "encrypted_content_or_unsupported_depot",
+                        }
+                    )
+                    break
                 if return_code != 0:
                     msg = (
                         f"ERROR: DepotDownloader exited with code "
@@ -388,6 +418,15 @@ class DownloadDepotsTask(QObject):
         if not line:
             return
 
+        line_lower = line.lower()
+        if any(pattern in line_lower for pattern in ENCRYPTED_CONTENT_PATTERNS):
+            self.encrypted_content_detected = True
+            self._current_depot_encrypted = True
+            self.last_error_reason = (
+                "encrypted_content_or_unsupported_depot"
+                + (f": depot {self._current_depot_id}" if self._current_depot_id else "")
+            )
+
         # Check for percentage update
         match = self.percentage_regex.search(line)
         emitted_percentage = None
@@ -432,7 +471,6 @@ class DownloadDepotsTask(QObject):
         self._log_buffer.append(line)
 
         # Check if we should flush the buffer
-        line_lower = line.lower()
         is_important = (
             "error" in line_lower
             or "warning" in line_lower

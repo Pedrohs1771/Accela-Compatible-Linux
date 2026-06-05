@@ -1,9 +1,13 @@
 import logging
 import os
 import sys
-import psutil
 import subprocess
 import re
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from core.linux_paths import (
     detect_linux_steam_mode,
@@ -151,6 +155,10 @@ def kill_steam_process():
     global _slssteam_so_path_cache, _library_inject_so_path_cache
     _slssteam_so_path_cache = None
     _library_inject_so_path_cache = None
+
+    if psutil is None:
+        logger.warning("psutil is unavailable; cannot terminate Steam automatically.")
+        return False
 
     process_name = "steam.exe" if sys.platform == "win32" else "steam"
     steam_proc = next(

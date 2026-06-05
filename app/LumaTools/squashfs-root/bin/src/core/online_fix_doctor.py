@@ -56,6 +56,15 @@ IGNORED_EXE_PARTS = {
     "dotnet",
 }
 
+ENCRYPTED_CONTENT_PATTERNS = (
+    "content still encrypted",
+    "still encrypted",
+    "missing decryption key",
+    "unable to get depot decryption key",
+    "no decryption key",
+    "depot encrypted",
+)
+
 
 @dataclass
 class OnlineFixResult:
@@ -415,6 +424,67 @@ def _read_proton_tool(steam_root: Optional[Path], appid: Any) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _detect_encrypted_content_in_text(content: str) -> bool:
+    lowered = content.lower()
+    return any(pattern in lowered for pattern in ENCRYPTED_CONTENT_PATTERNS)
+
+
+def _detect_encrypted_content_logs(
+    appid: Any,
+    steam_root: Optional[Path],
+    library_path: str,
+    depot_ids: Optional[Iterable[Any]] = None,
+    since_timestamp: Optional[float] = None,
+) -> str:
+    candidates: List[Path] = []
+    if steam_root:
+        candidates.extend((steam_root / "logs").glob("*.txt"))
+    candidates.extend((Path(library_path) / "steamapps").glob("*.log"))
+    match_tokens = {str(appid or "").strip()}
+    match_tokens.update(str(item).strip() for item in (depot_ids or []) if str(item).strip())
+    match_tokens = {token for token in match_tokens if token}
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            with open(candidate, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 1_000_000))
+                content = handle.read().decode("utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not _detect_encrypted_content_in_text(content):
+            continue
+        matching_lines = [
+            line.strip()
+            for line in content.splitlines()
+            if _detect_encrypted_content_in_text(line)
+        ]
+        app_specific = [
+            line
+            for line in matching_lines
+            if any(token in line for token in match_tokens)
+            and _log_line_is_current(line, since_timestamp)
+        ]
+        if app_specific:
+            return f"{candidate}: {app_specific[-1]}"
+    return ""
+
+
+def _log_line_is_current(line: str, since_timestamp: Optional[float]) -> bool:
+    if since_timestamp is None:
+        return True
+    match = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", line)
+    if not match:
+        return True
+    try:
+        line_timestamp = time.mktime(time.strptime(match.group(1), "%Y-%m-%d %H:%M:%S"))
+    except ValueError:
+        return True
+    return line_timestamp >= since_timestamp
+
+
 def _find_installed_game(appid: Any, library_path: Optional[str] = None) -> Tuple[Optional[str], Dict[str, Any]]:
     appid = str(appid).strip()
     libraries = [library_path] if library_path else list(steam_helpers.get_steam_libraries())
@@ -503,6 +573,61 @@ class OnlineFixDoctor:
         steam_root_str = steam_helpers.find_steam_install()
         steam_root = Path(steam_root_str).expanduser().resolve() if steam_root_str else None
         steam_mode = detect_linux_steam_mode() if sys.platform == "linux" else sys.platform
+
+        since_timestamp = None
+        appmanifest = detected_data.get("appmanifest")
+        if appmanifest:
+            try:
+                since_timestamp = Path(appmanifest).stat().st_mtime - 60
+            except OSError:
+                since_timestamp = None
+        encrypted_msg = _detect_encrypted_content_logs(
+            self.appid,
+            steam_root,
+            library_path,
+            depot_ids=(self.game_data.get("manifests") or {}).keys(),
+            since_timestamp=since_timestamp,
+        )
+        if encrypted_msg:
+            result.status = "encrypted_content_or_unsupported_depot"
+            result.ok = False
+            result.errors.append(
+                "encrypted_content_or_unsupported_depot: depot/manifest/content is not launchable"
+            )
+            report = {
+                "appid": self.appid,
+                "status": result.status,
+                "actions": [],
+                "steam_restarted": False,
+                "restart_needed": False,
+                "steam_mode": steam_mode,
+                "steam_root": str(steam_root) if steam_root else "",
+                "game_dir": str(game_dir),
+                "errors": list(result.errors),
+                "warnings": [],
+                "encrypted_log": encrypted_msg,
+                "next_action": "Usar outro depot/manifest; não tratar como sucesso de Online-Fix.",
+                "written_at": _now_iso(),
+            }
+            if game_dir.is_dir():
+                profile = {
+                    "appid": self.appid,
+                    "game_name": game_name,
+                    "game_dir": str(game_dir),
+                    "main_exe": "",
+                    "proton_tool": "",
+                    "dlls_expected": [],
+                    "dlls_found": [],
+                    "dlls_missing": [],
+                    "steam_mode": steam_mode,
+                    "last_repair_at": _now_iso(),
+                    "status": result.status,
+                }
+                profile_path = _profile_path(game_dir)
+                _write_json(profile_path, profile)
+                result.profile_path = str(profile_path)
+            self._save_report(result, report)
+            return result
 
         existing_profile = _load_profile(game_dir)
         main_exe = find_main_executable(game_dir, game_name) or existing_profile.get("main_exe") or ""

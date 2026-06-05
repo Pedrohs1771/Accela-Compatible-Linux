@@ -16,14 +16,6 @@ from utils.steam_manifest import (
     repair_installed_app_state,
     write_acf_file,
 )
-from utils.yaml_config_manager import (
-    add_additional_app,
-    add_dlc_data,
-    ensure_slssteam_config,
-    get_user_config_path,
-    is_slssteam_config_management_enabled,
-    is_slssteam_mode_enabled,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +25,57 @@ REQUIRED_APPSTATE_ZEROES = {
     "BytesToStage": "0",
     "TargetBuildID": "0",
     "UpdateResult": "0",
+}
+
+ENCRYPTED_CONTENT_PATTERNS = (
+    "content still encrypted",
+    "still encrypted",
+    "missing decryption key",
+    "unable to get depot decryption key",
+    "no decryption key",
+    "depot encrypted",
+)
+
+IGNORED_EXE_PARTS = {
+    "unitycrashhandler",
+    "crashhandler",
+    "crashreporter",
+    "setup",
+    "install",
+    "uninstall",
+    "unins",
+    "redist",
+    "vc_redist",
+    "vcredist",
+    "dxsetup",
+    "dotnet",
+}
+
+METADATA_ONLY_FILENAMES = {
+    "steam_appid.txt",
+    "force_appid.txt",
+    "luma_online_fix_info.txt",
+    "online_fix_profile.json",
+    "partial.json",
+}
+
+METADATA_ONLY_SUFFIXES = {
+    ".acf",
+    ".bak",
+    ".cache",
+    ".cfg",
+    ".config",
+    ".depot",
+    ".ini",
+    ".json",
+    ".log",
+    ".manifest",
+    ".old",
+    ".tmp",
+    ".txt",
+    ".vdf",
+    ".yaml",
+    ".yml",
 }
 
 
@@ -47,6 +90,7 @@ class AutoFixAction:
 @dataclass
 class AutoFixResult:
     ok: bool = False
+    status: str = "pending"
     actions: List[AutoFixAction] = field(default_factory=list)
     issues: List[str] = field(default_factory=list)
     attempts: int = 0
@@ -73,6 +117,7 @@ class AutoFixResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "ok": self.ok,
+            "status": self.status,
             "attempts": self.attempts,
             "restarted_steam": self.restarted_steam,
             "issues": list(self.issues),
@@ -150,6 +195,177 @@ def _directory_size(path: Path) -> int:
             except OSError:
                 continue
     return total
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _walk_limited(root: Path, max_depth: int = 5):
+    if not root.is_dir():
+        return
+    root = root.resolve()
+    for current, dirs, files in os.walk(root):
+        current_path = Path(current)
+        try:
+            depth = len(current_path.relative_to(root).parts)
+        except ValueError:
+            continue
+        if depth >= max_depth:
+            dirs[:] = []
+        yield current_path, depth, files
+
+
+def _find_main_executable(game_dir: Path, game_name: str = "") -> Optional[str]:
+    normalized_game = _normalize_name(game_name or game_dir.name)
+    candidates: List[Tuple[int, str]] = []
+    for current_path, depth, files in _walk_limited(game_dir, max_depth=5) or []:
+        for filename in files:
+            if not filename.lower().endswith(".exe"):
+                continue
+            stem = filename[:-4].lower()
+            if any(part in stem for part in IGNORED_EXE_PARTS):
+                continue
+            normalized_file = _normalize_name(Path(filename).stem)
+            score = depth * 40
+            if normalized_file == normalized_game:
+                score -= 500
+            elif normalized_game and normalized_game in normalized_file:
+                score -= 250
+            if "launcher" in stem:
+                score += 100
+            try:
+                score -= min((current_path / filename).stat().st_size // 1_000_000, 80)
+            except OSError:
+                pass
+            candidates.append((score, str(current_path / filename)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1].lower()))
+    return candidates[0][1]
+
+
+def _selected_depots_require_windows(game_data: Optional[Dict[str, Any]]) -> bool:
+    if not game_data:
+        return False
+    if game_data.get("force_proton") or game_data.get("apply_online_fix"):
+        return True
+    selected = [str(item) for item in game_data.get("selected_depots_list") or []]
+    depots = game_data.get("depots") or {}
+    for depot_id in selected:
+        platform = str((depots.get(depot_id) or {}).get("oslist") or "").lower()
+        if platform == "windows":
+            return True
+    return False
+
+
+def _is_metadata_only_file(path: Path) -> bool:
+    name = path.name.lower()
+    if name in METADATA_ONLY_FILENAMES:
+        return True
+    if name.endswith(".dll"):
+        return True
+    if path.suffix.lower() in METADATA_ONLY_SUFFIXES:
+        return True
+    lowered_parts = {part.lower() for part in path.parts}
+    return any(
+        marker in lowered_parts
+        for marker in {".depotdownloader", "_commonredist", "redist", "redistributables"}
+    )
+
+
+def _has_launchable_base_content(game_dir: Path, game_data: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    if not game_dir.is_dir():
+        return False, "missing_base_game_content: game_dir missing"
+    windows_build = _selected_depots_require_windows(game_data)
+    main_exe = _find_main_executable(game_dir, (game_data or {}).get("game_name", ""))
+    if windows_build and not main_exe:
+        return False, "missing_base_game_content: Windows/Proton build has no main .exe"
+    if main_exe:
+        return True, f"main executable found: {main_exe}"
+
+    meaningful_files = 0
+    for root, _, files in os.walk(game_dir):
+        for filename in files:
+            file_path = Path(root) / filename
+            if not _is_metadata_only_file(file_path):
+                meaningful_files += 1
+                if meaningful_files >= 2:
+                    return True, "launchable non-Windows content found"
+    return False, "only_dlc_or_runtime_downloaded: no launchable base content found"
+
+
+def _detect_encrypted_content_in_text(content: str) -> bool:
+    lowered = content.lower()
+    return any(pattern in lowered for pattern in ENCRYPTED_CONTENT_PATTERNS)
+
+
+def _detect_encrypted_content_logs(
+    appid: Any,
+    steam_root: Optional[str],
+    library_path: str,
+    depot_ids: Optional[Iterable[Any]] = None,
+    since_timestamp: Optional[float] = None,
+) -> Tuple[bool, str]:
+    candidates: List[Path] = []
+    if steam_root:
+        candidates.extend((Path(steam_root) / "logs").glob("*.txt"))
+    candidates.extend((Path(library_path) / "steamapps").glob("*.log"))
+    match_tokens = {str(appid or "").strip()}
+    match_tokens.update(str(item).strip() for item in (depot_ids or []) if str(item).strip())
+    match_tokens = {token for token in match_tokens if token}
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            with open(candidate, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 1_000_000))
+                content = handle.read().decode("utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not _detect_encrypted_content_in_text(content):
+            continue
+        matching_lines = [
+            line.strip()
+            for line in content.splitlines()
+            if _detect_encrypted_content_in_text(line)
+        ]
+        app_specific = [
+            line
+            for line in matching_lines
+            if any(token in line for token in match_tokens)
+            and _log_line_is_current(line, since_timestamp)
+        ]
+        if app_specific:
+            return True, f"encrypted_content_or_unsupported_depot: {candidate}: {app_specific[-1]}"
+    return False, ""
+
+
+def _log_line_is_current(line: str, since_timestamp: Optional[float]) -> bool:
+    if since_timestamp is None:
+        return True
+    match = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", line)
+    if not match:
+        return True
+    try:
+        line_timestamp = time.mktime(time.strptime(match.group(1), "%Y-%m-%d %H:%M:%S"))
+    except ValueError:
+        return True
+    return line_timestamp >= since_timestamp
+
+
+def _status_from_issues(issues: Iterable[str]) -> str:
+    for issue in issues:
+        issue_text = str(issue)
+        if issue_text.startswith("encrypted_content_or_unsupported_depot"):
+            return "encrypted_content_or_unsupported_depot"
+        if issue_text.startswith("missing_base_game_content"):
+            return "missing_base_game_content"
+        if issue_text.startswith("only_dlc_or_runtime_downloaded"):
+            return "only_dlc_or_runtime_downloaded"
+    return "error"
 
 
 def _manifest_path(library_path: str, appid: Any) -> Path:
@@ -312,6 +528,18 @@ def _check_depotcache(library_path: str, depot_manifests: Dict[str, str]) -> Tup
 def _ensure_slssteam_entries(game_data: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
     if sys.platform != "linux":
         return True, "SLSsteam config not required on this platform."
+    try:
+        from utils.yaml_config_manager import (
+            add_additional_app,
+            add_dlc_data,
+            ensure_slssteam_config,
+            get_user_config_path,
+            is_slssteam_config_management_enabled,
+            is_slssteam_mode_enabled,
+        )
+    except ImportError as exc:
+        return True, f"SLSsteam config helpers unavailable in CLI runtime; skipped: {exc}"
+
     if not is_slssteam_mode_enabled() or not is_slssteam_config_management_enabled():
         return True, "SLSsteam config management inactive."
     if not game_data:
@@ -340,6 +568,15 @@ def _ensure_slssteam_entries(game_data: Optional[Dict[str, Any]]) -> Tuple[bool,
 def _check_slssteam_entries(game_data: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
     if sys.platform != "linux":
         return True, "SLSsteam config not required on this platform."
+    try:
+        from utils.yaml_config_manager import (
+            get_user_config_path,
+            is_slssteam_config_management_enabled,
+            is_slssteam_mode_enabled,
+        )
+    except ImportError as exc:
+        return True, f"SLSsteam config helpers unavailable in CLI runtime; skipped: {exc}"
+
     if not is_slssteam_mode_enabled() or not is_slssteam_config_management_enabled():
         return True, "SLSsteam config management inactive."
     if not game_data:
@@ -415,6 +652,22 @@ def verify_install_state(
     log = logger_override or logger
     issues: List[str] = []
     appmanifest = _manifest_path(library_path, appid)
+    steam_root = steam_helpers.find_steam_install()
+    depot_ids = []
+    if game_data:
+        depot_ids = list((game_data.get("manifests") or {}).keys())
+    since_timestamp = None
+    if appmanifest.is_file():
+        try:
+            since_timestamp = appmanifest.stat().st_mtime - 60
+        except OSError:
+            since_timestamp = None
+    encrypted, encrypted_msg = _detect_encrypted_content_logs(
+        appid, steam_root, library_path, depot_ids=depot_ids, since_timestamp=since_timestamp
+    )
+    if encrypted:
+        return [encrypted_msg]
+
     if not appmanifest.is_file():
         return [f"appmanifest missing: {appmanifest}"]
 
@@ -437,6 +690,12 @@ def verify_install_state(
         issues.append(f"game_dir missing: {game_dir}")
     elif _directory_size(game_dir) <= 0:
         issues.append(f"game_dir empty: {game_dir}")
+    else:
+        content_ok, content_msg = _has_launchable_base_content(game_dir, game_data)
+        if not content_ok:
+            issues.append(content_msg)
+        else:
+            log.debug(content_msg)
 
     depot_ok, depot_msg = _check_depotcache(
         library_path, _selected_depot_manifests(game_data, content)
@@ -477,8 +736,19 @@ def auto_fix_install_state(
     for attempt in range(1, max_attempts + 1):
         result.attempts = attempt
         issues = verify_install_state(appid, library_path, game_data, logger_override=log)
+        if any(str(issue).startswith("encrypted_content_or_unsupported_depot") for issue in issues):
+            result.status = "encrypted_content_or_unsupported_depot"
+            result.issues = issues
+            result.add(
+                "encrypted_content_or_unsupported_depot",
+                "abort: depot/manifest/content is not launchable",
+                False,
+                False,
+            )
+            return result
         if not issues:
             result.ok = True
+            result.status = "ok"
             break
 
         log.info("Auto-Fix attempt %s for AppID %s: %s", attempt, appid, "; ".join(issues))
@@ -522,6 +792,7 @@ def auto_fix_install_state(
 
         if not verify_install_state(appid, library_path, game_data, logger_override=log):
             result.ok = True
+            result.status = "ok"
             result.issues = []
             break
 
@@ -529,6 +800,7 @@ def auto_fix_install_state(
         _restart_steam_if_needed(result, True)
     elif not result.ok:
         result.issues = verify_install_state(appid, library_path, game_data, logger_override=log)
+        result.status = _status_from_issues(result.issues)
 
     return result
 

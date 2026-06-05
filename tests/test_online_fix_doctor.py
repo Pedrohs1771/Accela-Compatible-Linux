@@ -144,6 +144,26 @@ class OnlineFixDoctorTests(unittest.TestCase):
                 any("Plugins/x86_64/steam_api64.dll" in error for error in result.errors)
             )
 
+    def test_encrypted_content_report_aborts_online_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            steam_root, library, game_dir = self._make_install(root)
+            reports = root / "reports"
+            (steam_root / "logs").mkdir(parents=True)
+            (steam_root / "logs" / "content_log.txt").write_text(
+                "AppID 728880: unable to get depot decryption key\n",
+                encoding="utf-8",
+            )
+            patch_reports, patch_steam, patch_mode = self._patch_environment(steam_root, library, reports)
+            with patch_reports, patch_steam, patch_mode, patch("core.online_fix_doctor._restart_steam") as restart:
+                result = repair_online_fix("728880", auto=True, restart_steam=True)
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.status, "encrypted_content_or_unsupported_depot")
+            self.assertTrue((reports / "728880.json").is_file())
+            self.assertTrue((game_dir / ".LumaTools" / "online_fix_profile.json").is_file())
+            restart.assert_not_called()
+
     def test_does_not_restart_steam_when_nothing_changed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
