@@ -11,6 +11,29 @@ from utils.steam_manifest import (
 
 
 class SteamManifestRepairTests(unittest.TestCase):
+    @staticmethod
+    def _write_manifest(steamapps: Path, appid: str, name: str, installdir: str) -> Path:
+        manifest = steamapps / f"appmanifest_{appid}.acf"
+        manifest.write_text(
+            '"AppState"\n'
+            "{\n"
+            f'\t"appid"\t\t"{appid}"\n'
+            f'\t"name"\t\t"{name}"\n'
+            '\t"StateFlags"\t\t"6"\n'
+            f'\t"installdir"\t\t"{installdir}"\n'
+            '\t"UpdateResult"\t\t"8"\n'
+            '\t"BytesToDownload"\t\t"100"\n'
+            '\t"BytesDownloaded"\t\t"10"\n'
+            '\t"BytesToStage"\t\t"200"\n'
+            '\t"BytesStaged"\t\t"20"\n'
+            '\t"TargetBuildID"\t\t"999"\n'
+            '\t"DownloadType"\t\t"4"\n'
+            '\t"ScheduledAutoUpdate"\t\t"123456"\n'
+            "}\n",
+            encoding="utf-8",
+        )
+        return manifest
+
     def test_repairs_lumatools_managed_update_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             library = Path(tmp)
@@ -112,6 +135,56 @@ class SteamManifestRepairTests(unittest.TestCase):
             self.assertEqual(result["repaired"], [])
             self.assertEqual(result["skipped"], ["123"])
             self.assertIn('"StateFlags"\t\t"6"', manifest.read_text(encoding="utf-8"))
+
+    def test_stress_repairs_only_managed_games_across_libraries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            libraries = [root / "native", root / "flatpak"]
+            expected_repaired = []
+
+            for lib_index, library in enumerate(libraries):
+                steamapps = library / "steamapps"
+                steamapps.mkdir(parents=True)
+                for offset in range(12):
+                    appid = str(800000 + lib_index * 100 + offset)
+                    name = f"Managed {appid}"
+                    game_dir = steamapps / "common" / name
+                    game_dir.mkdir(parents=True)
+                    (game_dir / ".LumaTools").write_text("", encoding="utf-8")
+                    (game_dir / "payload.bin").write_bytes(b"x" * (offset + 1))
+                    self._write_manifest(steamapps, appid, name, name)
+                    (steamapps / "downloading" / appid).mkdir(parents=True)
+                    (steamapps / "temp" / appid).mkdir(parents=True)
+                    (steamapps / "shadercache" / appid).mkdir(parents=True)
+                    expected_repaired.append(appid)
+
+                unmanaged_id = str(900000 + lib_index)
+                unmanaged_name = f"Unmanaged {unmanaged_id}"
+                (steamapps / "common" / unmanaged_name).mkdir(parents=True)
+                self._write_manifest(steamapps, unmanaged_id, unmanaged_name, unmanaged_name)
+
+            result = repair_lumatools_library_manifests([str(path) for path in libraries])
+
+            self.assertEqual(result["repaired"], expected_repaired)
+            self.assertEqual(result["failed"], [])
+            for appid in expected_repaired:
+                manifest = next(root.glob(f"*/steamapps/appmanifest_{appid}.acf"))
+                text = manifest.read_text(encoding="utf-8")
+                self.assertIn('"StateFlags"\t\t"4"', text)
+                self.assertIn('"BytesToDownload"\t\t"0"', text)
+                self.assertIn('"BytesToStage"\t\t"0"', text)
+                self.assertIn('"TargetBuildID"\t\t"0"', text)
+                steamapps = manifest.parent
+                self.assertFalse((steamapps / "downloading" / appid).exists())
+                self.assertFalse((steamapps / "temp" / appid).exists())
+                self.assertFalse((steamapps / "shadercache" / appid).exists())
+
+            for unmanaged_id in ("900000", "900001"):
+                manifest = next(root.glob(f"*/steamapps/appmanifest_{unmanaged_id}.acf"))
+                self.assertIn(
+                    '"StateFlags"\t\t"6"',
+                    manifest.read_text(encoding="utf-8"),
+                )
 
     def test_active_steam_owner_uses_most_recent_login_user(self):
         with tempfile.TemporaryDirectory() as tmp:
