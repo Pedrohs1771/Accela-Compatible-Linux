@@ -53,11 +53,19 @@ class DownloadDepotsTask(QObject):
         self.current_depot_size = 0
         self._last_log_time = 0
         self._log_buffer = []
+        self._last_status_emit_time = 0
+        self._last_status_percentage = -1
         self.commands_started = 0
         self.failed_depots: List[Dict[str, Any]] = []
         self.skipped_depots: List[str] = []
         self.return_codes: Dict[str, int] = {}
         self.last_error_reason = ""
+        self._download_file_line_regex = re.compile(
+            r"^\d{1,3}(?:\.\d{1,2})?%\s+(?:/|[A-Za-z]:\\|\\\\)"
+        )
+        self._prealloc_line_regex = re.compile(
+            r"^Pre-allocating\s+(?:/|[A-Za-z]:\\|\\\\)"
+        )
 
     @property
     def is_running_flag(self) -> bool:
@@ -380,11 +388,9 @@ class DownloadDepotsTask(QObject):
         if not line:
             return
 
-        # Add to buffer
-        self._log_buffer.append(line)
-
         # Check for percentage update
         match = self.percentage_regex.search(line)
+        emitted_percentage = None
         if match:
             try:
                 percentage = float(match.group(1))
@@ -408,21 +414,64 @@ class DownloadDepotsTask(QObject):
                     if total_percentage != self.last_percentage:
                         self.progress_percentage.emit(total_percentage)
                         self.last_percentage = total_percentage
+                    emitted_percentage = total_percentage
                 else:
                     int_percentage = int(percentage)
                     if int_percentage != self.last_percentage:
                         self.progress_percentage.emit(int_percentage)
                         self.last_percentage = int_percentage
+                    emitted_percentage = int_percentage
             except ValueError:
                 pass
 
+        if self._is_noisy_file_transfer_line(line):
+            if emitted_percentage is not None:
+                self._emit_throttled_status(emitted_percentage)
+            return
+
+        self._log_buffer.append(line)
+
         # Check if we should flush the buffer
-        is_important = "error" in line.lower() or "warning" in line.lower()
+        line_lower = line.lower()
+        is_important = (
+            "error" in line_lower
+            or "warning" in line_lower
+            or "failed" in line_lower
+            or "downloaded" in line_lower
+            or "total downloaded" in line_lower
+            or "disconnected" in line_lower
+        )
         current_time = time.time()
 
-        # Flush if important message or time interval passed (80ms)
-        if is_important or (current_time - self._last_log_time > 0.08):
+        # Flush if important message or time interval passed.
+        if is_important or (current_time - self._last_log_time > 0.5):
             self._flush_log_buffer()
+
+    def _is_noisy_file_transfer_line(self, line: str) -> bool:
+        return bool(
+            self._download_file_line_regex.match(line)
+            or self._prealloc_line_regex.match(line)
+        )
+
+    def _emit_throttled_status(self, percentage: int) -> None:
+        current_time = time.time()
+        if (
+            percentage == self._last_status_percentage
+            and (current_time - self._last_status_emit_time) < 2.0
+        ):
+            return
+
+        if (
+            percentage != 100
+            and percentage != self._last_status_percentage
+            and abs(percentage - self._last_status_percentage) < 5
+            and (current_time - self._last_status_emit_time) < 2.0
+        ):
+            return
+
+        self.progress.emit(f"Baixando arquivos... {percentage}%")
+        self._last_status_percentage = percentage
+        self._last_status_emit_time = current_time
 
     def _prepare_downloads(
         self, game_data: Dict[str, Any], selected_depots: List[str], dest_path: str

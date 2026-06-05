@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from urllib.parse import urlparse
 from typing import Any, Optional
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 try:
     from pypresence import Presence
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 class DiscordPresenceManager(QObject):
     """Discord Rich Presence with graceful reconnects and zero-noise behavior."""
+
+    _presence_update_finished = pyqtSignal(object, float, object)
 
     DEFAULT_CLIENT_ID_ENV = "LUMATOOLS_DISCORD_CLIENT_ID"
     LEGACY_CLIENT_ID_ENV = "ACCELA_DISCORD_CLIENT_ID"
@@ -62,6 +65,10 @@ class DiscordPresenceManager(QObject):
         self.minimum_update_interval = 5.0
         self._status_text = "Aguardando Discord"
         self._presence_suspended = False
+        self._presence_update_in_flight = False
+        self._presence_update_lock = threading.Lock()
+        self._pending_payload: Optional[dict[str, Any]] = None
+        self._rpc_lock = threading.Lock()
 
         self.timer = QTimer(self)
         self.timer.setInterval(10000)
@@ -70,6 +77,8 @@ class DiscordPresenceManager(QObject):
         self.reconnect_timer = QTimer(self)
         self.reconnect_timer.setInterval(30000)
         self.reconnect_timer.timeout.connect(self._attempt_reconnect)
+
+        self._presence_update_finished.connect(self._finish_presence_update)
 
         self.reload_settings()
 
@@ -113,10 +122,7 @@ class DiscordPresenceManager(QObject):
 
         if self._should_suspend_for_running_game():
             if not self._presence_suspended:
-                try:
-                    self.rpc.clear()
-                except Exception:
-                    pass
+                self._try_clear_presence_nonblocking()
                 self._presence_suspended = True
                 self.last_payload = None
                 self._status_text = "Rich Presence pausado com jogo em execucao"
@@ -135,13 +141,8 @@ class DiscordPresenceManager(QObject):
         if not force and (now - self.last_push_at) < self.minimum_update_interval:
             return
 
-        try:
-            self.rpc.update(**payload)
-            self.last_payload = payload
-            self.last_push_at = now
-        except Exception as exc:
-            logger.warning("Failed to update Discord Rich Presence: %s", exc)
-            self._disconnect(schedule_reconnect=True)
+        if self._queue_presence_update(payload, now):
+            return
 
     def _attempt_reconnect(self) -> None:
         if self.connected:
@@ -159,7 +160,8 @@ class DiscordPresenceManager(QObject):
 
         try:
             self.rpc = self.presence_factory(self.client_id)
-            self.rpc.connect()
+            with self._rpc_lock:
+                self.rpc.connect()
             self.connected = True
             self.started_at = int(time.time())
             self.last_payload = None
@@ -172,6 +174,55 @@ class DiscordPresenceManager(QObject):
             logger.warning("Failed to initialize Discord Rich Presence: %s", exc)
             self._status_text = "Aguardando Discord"
             self._disconnect(schedule_reconnect=True)
+
+    def _queue_presence_update(self, payload: dict[str, Any], timestamp: float) -> bool:
+        with self._presence_update_lock:
+            if self._presence_update_in_flight:
+                self._pending_payload = payload
+                return False
+            self._presence_update_in_flight = True
+            self._pending_payload = payload
+
+        threading.Thread(
+            target=self._push_presence_update_worker,
+            args=(payload, timestamp),
+            daemon=True,
+        ).start()
+        return True
+
+    def _push_presence_update_worker(
+        self, payload: dict[str, Any], timestamp: float
+    ) -> None:
+        error: Optional[Exception] = None
+        try:
+            with self._rpc_lock:
+                rpc = self.rpc
+                if not self.connected or rpc is None:
+                    return
+                rpc.update(**payload)
+        except Exception as exc:
+            error = exc
+        finally:
+            self._presence_update_finished.emit(payload, timestamp, error)
+
+    def _finish_presence_update(
+        self, payload: dict[str, Any], timestamp: float, error: Optional[Exception]
+    ) -> None:
+        with self._presence_update_lock:
+            self._presence_update_in_flight = False
+            pending_payload = self._pending_payload
+            self._pending_payload = None
+
+        if error is not None:
+            logger.warning("Failed to update Discord Rich Presence: %s", error)
+            self._disconnect(schedule_reconnect=True)
+            return
+
+        self.last_payload = payload
+        self.last_push_at = timestamp
+
+        if pending_payload is not None and pending_payload != payload and self.connected:
+            self._queue_presence_update(pending_payload, time.time())
 
     def _get_client_id(self) -> str:
         configured = self.settings.value(
@@ -358,22 +409,40 @@ class DiscordPresenceManager(QObject):
         self._presence_suspended = False
 
         if self.rpc is not None:
-            try:
-                self.rpc.clear()
-            except Exception:
-                pass
-            try:
-                self.rpc.close()
-            except Exception:
-                pass
+            acquired = self._rpc_lock.acquire(blocking=False)
+            if acquired:
+                try:
+                    self.rpc.clear()
+                    self.rpc.close()
+                except Exception:
+                    pass
+                finally:
+                    self._rpc_lock.release()
 
         self.rpc = None
         self.connected = False
+        with self._presence_update_lock:
+            self._presence_update_in_flight = False
+            self._pending_payload = None
+
         if schedule_reconnect and self.settings.value("discord_presence_enabled", True, type=bool):
             self._status_text = "Aguardando Discord"
             self.reconnect_timer.start()
         else:
             self.reconnect_timer.stop()
+
+    def _try_clear_presence_nonblocking(self) -> None:
+        if self.rpc is None:
+            return
+        acquired = self._rpc_lock.acquire(blocking=False)
+        if not acquired:
+            return
+        try:
+            self.rpc.clear()
+        except Exception:
+            pass
+        finally:
+            self._rpc_lock.release()
 
     def shutdown(self) -> None:
         self._disconnect(schedule_reconnect=False)

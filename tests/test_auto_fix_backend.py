@@ -64,9 +64,31 @@ sys.modules.setdefault("PyQt6.QtGui", qtgui)
 sys.modules.setdefault("PyQt6.QtWidgets", qtwidgets)
 
 from core.auto_fix_backend import auto_fix_install_state
+from core.tasks.download_depots_task import DownloadDepotsTask
+
+
+class _SignalRecorder:
+    def __init__(self) -> None:
+        self.values = []
+
+    def emit(self, *args):
+        self.values.append(args)
 
 
 class AutoFixBackendTests(unittest.TestCase):
+    def test_download_output_throttles_file_path_flood(self) -> None:
+        task = DownloadDepotsTask()
+        task.progress = _SignalRecorder()
+        task.progress_percentage = _SignalRecorder()
+        task.total_download_size_for_this_job = 100
+        task.current_depot_size = 100
+
+        task._handle_downloader_output("58.60% /tmp/Game/Resources/icons/ship_70.png")
+
+        self.assertEqual(task.progress_percentage.values, [(58,)])
+        self.assertEqual(task.progress.values, [("Baixando arquivos... 58%",)])
+        self.assertEqual(task._log_buffer, [])
+
     def test_repairs_update_state_last_owner_and_depotcache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
