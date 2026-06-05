@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -38,7 +39,7 @@ class DownloadDepotsTask(QObject):
     progress = pyqtSignal(str)
     progress_percentage = pyqtSignal(int)
     completed = pyqtSignal()
-    error = pyqtSignal()
+    error = pyqtSignal(tuple)
 
     def __init__(self):
         super().__init__()
@@ -52,6 +53,11 @@ class DownloadDepotsTask(QObject):
         self.current_depot_size = 0
         self._last_log_time = 0
         self._log_buffer = []
+        self.commands_started = 0
+        self.failed_depots: List[Dict[str, Any]] = []
+        self.skipped_depots: List[str] = []
+        self.return_codes: Dict[str, int] = {}
+        self.last_error_reason = ""
 
     @property
     def is_running_flag(self) -> bool:
@@ -81,13 +87,13 @@ class DownloadDepotsTask(QObject):
             commands, skipped_depots, depot_sizes = self._prepare_downloads(
                 game_data, selected_depots, dest_path
             )
+            self.skipped_depots = skipped_depots
 
             if not commands:
-                self.progress.emit(
-                    "No valid download commands to execute. Task finished."
-                )
-                self.completed.emit()
-                return
+                self.last_error_reason = "No valid download commands to execute."
+                self.progress.emit(f"ERROR: {self.last_error_reason}")
+                logger.error(self.last_error_reason)
+                raise RuntimeError(self.last_error_reason)
 
             total_depots = len(commands)
             self.total_download_size_for_this_job = sum(depot_sizes)
@@ -126,6 +132,7 @@ class DownloadDepotsTask(QObject):
                     text=False,  # Binary mode
                     creationflags=creation_flags,
                 )
+                self.commands_started += 1
 
                 # Read output directly in this thread
                 self._read_process_output()
@@ -147,12 +154,17 @@ class DownloadDepotsTask(QObject):
 
                 if return_code != 0:
                     msg = (
-                        f"Warning: DepotDownloader exited with code "
+                        f"ERROR: DepotDownloader exited with code "
                         f"{return_code} for depot {depot_id}."
                     )
                     self.progress.emit(msg)
-                    logger.warning(msg)
+                    logger.error(msg)
+                    self.return_codes[str(depot_id)] = int(return_code)
+                    self.failed_depots.append(
+                        {"depot_id": str(depot_id), "return_code": int(return_code)}
+                    )
                 else:
+                    self.return_codes[str(depot_id)] = 0
                     self.completed_so_far_for_this_job += self.current_depot_size
 
             if skipped_depots:
@@ -165,6 +177,26 @@ class DownloadDepotsTask(QObject):
                 logger.info("Download task stopped before cleanup.")
                 self.completed.emit()
                 return
+
+            game_dir = self._get_download_dir(game_data, dest_path)
+            if self.failed_depots:
+                depot_list = ", ".join(
+                    f"{item['depot_id']}={item['return_code']}"
+                    for item in self.failed_depots
+                )
+                self.last_error_reason = f"Depot download failed: {depot_list}"
+                self._cleanup_failed_download_state(game_data, dest_path)
+                raise RuntimeError(self.last_error_reason)
+
+            if self.commands_started <= 0:
+                self.last_error_reason = "No depot download command was started."
+                self._cleanup_failed_download_state(game_data, dest_path)
+                raise RuntimeError(self.last_error_reason)
+
+            if not os.path.isdir(game_dir) or self._directory_size(game_dir) <= 0:
+                self.last_error_reason = f"Downloaded game directory is empty: {game_dir}"
+                self._cleanup_failed_download_state(game_data, dest_path)
+                raise RuntimeError(self.last_error_reason)
 
             self._cleanup_temp_files()
             self.completed.emit()
@@ -180,15 +212,93 @@ class DownloadDepotsTask(QObject):
             )
             self.progress.emit(error_msg)
             logger.critical(f"'{binary}' not found.")
-            self.error.emit()
+            self.error.emit((FileNotFoundError, error_msg, None))
             raise
 
         except (OSError, subprocess.SubprocessError) as e:
             self.progress.emit(f"An unexpected error occurred during download: {e}")
             logger.error(f"Download subprocess failed: {e}", exc_info=True)
             self.process = None
-            self.error.emit()
+            self.error.emit((type(e), e, None))
             raise
+
+    @staticmethod
+    def _get_install_folder_name(game_data: Dict[str, Any]) -> str:
+        safe_game_name_fallback = (
+            re.sub(r"[^\w\s-]", "", game_data.get("game_name", ""))
+            .strip()
+            .replace(" ", "_")
+        )
+        install_folder_name = game_data.get("installdir", safe_game_name_fallback)
+        if not install_folder_name:
+            install_folder_name = f"App_{game_data['appid']}"
+        return install_folder_name
+
+    def _get_download_dir(self, game_data: Dict[str, Any], dest_path: str) -> str:
+        return os.path.join(
+            dest_path,
+            "steamapps",
+            "common",
+            self._get_install_folder_name(game_data),
+        )
+
+    @staticmethod
+    def _directory_size(path: str) -> int:
+        total = 0
+        try:
+            for root, _, files in os.walk(path):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    try:
+                        total += os.path.getsize(file_path)
+                    except OSError:
+                        continue
+        except OSError:
+            return 0
+        return total
+
+    def _cleanup_failed_download_state(
+        self, game_data: Dict[str, Any], dest_path: str
+    ) -> None:
+        appid = str(game_data.get("appid", "")).strip()
+        steamapps_dir = os.path.join(dest_path, "steamapps")
+        game_dir = self._get_download_dir(game_data, dest_path)
+        for queue_name in ("downloading", "temp", "shadercache"):
+            candidates = [
+                os.path.join(steamapps_dir, queue_name, appid),
+                os.path.join(steamapps_dir, queue_name, f"appmanifest_{appid}.acf"),
+            ]
+            for candidate in candidates:
+                if not candidate or not os.path.exists(candidate):
+                    continue
+                try:
+                    if os.path.isdir(candidate):
+                        shutil.rmtree(candidate)
+                    else:
+                        os.remove(candidate)
+                    logger.info("Removed failed download state: %s", candidate)
+                except OSError as exc:
+                    logger.warning("Failed to remove failed download state %s: %s", candidate, exc)
+
+        try:
+            marker_dir = os.path.join(game_dir, ".DepotDownloader")
+            os.makedirs(marker_dir, exist_ok=True)
+            marker_path = os.path.join(marker_dir, "partial.json")
+            with open(marker_path, "w", encoding="utf-8") as marker_file:
+                json.dump(
+                    {
+                        "appid": appid,
+                        "failed_depots": self.failed_depots,
+                        "skipped_depots": self.skipped_depots,
+                        "reason": self.last_error_reason,
+                        "timestamp": int(time.time()),
+                    },
+                    marker_file,
+                    indent=2,
+                )
+            logger.info("Marked partial download at %s", marker_path)
+        except OSError as exc:
+            logger.warning("Failed to mark partial download: %s", exc)
 
     def _read_process_output(self):
         """Reads process output byte-by-byte to handle \r updates."""

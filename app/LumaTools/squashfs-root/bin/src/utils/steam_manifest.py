@@ -241,7 +241,7 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
         with open(acf_path, "w", encoding="utf-8") as handle:
             handle.write(content)
 
-        for folder in ("downloading", "temp"):
+        for folder in ("downloading", "temp", "shadercache"):
             path = os.path.join(steamapps_dir, folder, str(appid))
             if os.path.exists(path):
                 shutil.rmtree(path, ignore_errors=True)

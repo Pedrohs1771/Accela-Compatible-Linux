@@ -26,6 +26,7 @@ from core.tasks.generate_achievements_task import GenerateAchievementsTask
 from core.tasks.monitor_speed_task import SpeedMonitorTask
 from core.tasks.process_zip_task import ProcessZipTask
 from core.tasks.steamless_task import SteamlessTask
+from core.auto_fix_backend import auto_fix_install_state
 from core.fix_planner import apply_ryuu_fix, record_online_fix_layer
 from core.ryuu_client import RyuuClient, RyuuClientError, load_ryuu_auth_key
 
@@ -41,6 +42,7 @@ from utils.yaml_config_manager import (
     get_user_config_path,
     add_additional_app,
     add_dlc_data,
+    ensure_slssteam_config,
     is_slssteam_mode_enabled,
     is_slssteam_config_management_enabled,
 )
@@ -92,6 +94,8 @@ class TaskManager(QObject):
         self._pending_ryuu_fix_path: Optional[str] = None
         self._pending_ryuu_error = ""
         self._pending_ryuu_apply_result: Optional[Dict[str, Any]] = None
+        self._auto_fix_status: Optional[Dict[str, Any]] = None
+        self._auto_fix_error_shown = False
         self._steamless_success = None
         self._steamless_manual_run = False
 
@@ -487,6 +491,8 @@ class TaskManager(QObject):
         self._pending_ryuu_fix_path = None
         self._pending_ryuu_error = ""
         self._pending_ryuu_apply_result = None
+        self._auto_fix_status = None
+        self._auto_fix_error_shown = False
 
         size_on_disk = 0
         if self.download_task:
@@ -520,6 +526,7 @@ class TaskManager(QObject):
             self._finalize_goldberg(auto_apply_goldberg)
             self._finalize_online_fix()
             self._finalize_greenluma(config_enabled)
+            self._auto_fix_status = self._run_auto_fix_backend(size_on_disk)
 
         except OSError as e:
             logger.error(
@@ -547,6 +554,27 @@ class TaskManager(QObject):
         appid = self.game_data.get("appid")
         if appid and self.current_dest_path:
             repair_installed_app_state(self.current_dest_path, appid, logger=logger)
+
+    def _run_auto_fix_backend(self, size_on_disk: int) -> Dict[str, Any]:
+        if not self.game_data or not self.current_dest_path:
+            return {"ok": False, "issues": ["Missing game data or destination path."]}
+
+        result = auto_fix_install_state(
+            self.game_data,
+            self.current_dest_path,
+            size_on_disk=size_on_disk,
+            auto_restart_steam=self.slssteam_mode_was_active or self.library_mode_was_active,
+            logger_override=logger,
+        )
+        if result.ok:
+            logger.info("Auto-Fix Backend finished OK for AppID %s", self.game_data.get("appid"))
+        else:
+            logger.error(
+                "Auto-Fix Backend could not fully repair AppID %s: %s",
+                self.game_data.get("appid"),
+                "; ".join(result.issues),
+            )
+        return result.to_dict()
 
     def _persist_wrapper_metadata(self):
         """
@@ -764,6 +792,22 @@ class TaskManager(QObject):
     @pyqtSlot()
     def _finalize_job_logic(self):
         """Called on Main Thread. Acts as a State Machine Conductor."""
+        if (
+            self._auto_fix_status
+            and not self._auto_fix_status.get("ok")
+            and not self._auto_fix_error_shown
+        ):
+            self._auto_fix_error_shown = True
+            issues = self._auto_fix_status.get("issues") or ["Auto-Fix não conseguiu validar a instalação."]
+            QMessageBox.critical(
+                self.main_window,
+                "Auto-Fix",
+                "Não consegui corrigir a instalação automaticamente:\n"
+                + "\n".join(str(issue) for issue in issues[:6]),
+            )
+            self.job_finished()
+            return
+
         # Force steam restart prompt to be pending if we applied Goldberg/Online mode
         current_metadata = self.current_job_metadata or {}
         if current_metadata.get("source") == "ryuu":
@@ -1011,7 +1055,9 @@ class TaskManager(QObject):
         if not os.path.exists(temp_manifest_dir):
             return
 
-        target_depotcache_dir = os.path.join(self.current_dest_path, "depotcache")
+        target_depotcache_dir = os.path.join(
+            self.current_dest_path, "steamapps", "depotcache"
+        )
 
         try:
             os.makedirs(target_depotcache_dir, exist_ok=True)
@@ -1809,7 +1855,7 @@ class TaskManager(QObject):
 
         try:
             config_path = get_user_config_path()
-            if not config_path.exists():
+            if not config_path.exists() and not ensure_slssteam_config(config_path):
                 return
 
             main_appid = self.game_data.get("appid")
@@ -1979,6 +2025,8 @@ class TaskManager(QObject):
         self.current_job_metadata = None
         self.slssteam_mode_was_active = False
         self.library_mode_was_active = False
+        self._auto_fix_status = None
+        self._auto_fix_error_shown = False
         self.is_processing = False
 
         self._update_status_button_color()
