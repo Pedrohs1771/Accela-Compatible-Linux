@@ -48,6 +48,18 @@ class LinuxSteamModeTests(unittest.TestCase):
             "flatpak",
         )
 
+    def test_process_classifier_detects_flatpak_steam_binary_path(self):
+        from core import linux_paths
+
+        self.assertEqual(
+            linux_paths._classify_steam_process(
+                "steam",
+                "/home/arch/.var/app/com.valvesoftware.Steam/.local/share/Steam/ubuntu12_32/steam",
+                "",
+            ),
+            "flatpak",
+        )
+
     def test_native_root_wins_when_flatpak_is_only_installed(self):
         from core import linux_paths
 

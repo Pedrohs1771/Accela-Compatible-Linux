@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from utils.steam_manifest import (
+    detect_recent_decryption_key_issue,
     get_active_steam_owner,
     repair_lumatools_library_manifests,
     write_acf_file,
@@ -17,6 +18,12 @@ class SteamManifestRepairTests(unittest.TestCase):
             game_dir = steamapps / "common" / "Stardew Valley"
             game_dir.mkdir(parents=True)
             (game_dir / ".LumaTools").write_text("", encoding="utf-8")
+            (game_dir / "data.bin").write_bytes(b"12345")
+            (steamapps / "downloading" / "413150").mkdir(parents=True)
+            (steamapps / "temp" / "413150").mkdir(parents=True)
+            (steamapps / "shadercache" / "413150").mkdir(parents=True)
+            (steamapps / "appmanifest_413150.acf.tmp").write_text("tmp", encoding="utf-8")
+            (steamapps / "appmanifest_413150.acf.old").write_text("old", encoding="utf-8")
             manifest = steamapps / "appmanifest_413150.acf"
             manifest.write_text(
                 '"AppState"\n'
@@ -41,6 +48,47 @@ class SteamManifestRepairTests(unittest.TestCase):
             self.assertIn('"UpdateResult"\t\t"0"', text)
             self.assertIn('"BytesToDownload"\t\t"0"', text)
             self.assertIn('"ScheduledAutoUpdate"\t\t"0"', text)
+            self.assertIn('"SizeOnDisk"\t\t"5"', text)
+            self.assertFalse((steamapps / "downloading" / "413150").exists())
+            self.assertFalse((steamapps / "temp" / "413150").exists())
+            self.assertFalse((steamapps / "shadercache" / "413150").exists())
+            self.assertFalse((steamapps / "appmanifest_413150.acf.tmp").exists())
+            self.assertFalse((steamapps / "appmanifest_413150.acf.old").exists())
+
+    def test_reports_decryption_key_block_without_hiding_repair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            steamapps = library / "steamapps"
+            game_dir = steamapps / "common" / "Blocked Game"
+            game_dir.mkdir(parents=True)
+            logs = library / "logs"
+            logs.mkdir(parents=True)
+            (game_dir / ".LumaTools").write_text("", encoding="utf-8")
+            (logs / "content_log.txt").write_text(
+                "[2026-06-04] AppID 777 update prefetch canceled : "
+                "Failed to initialize depot 778, manifest 123 (Missing decryption key)\n",
+                encoding="utf-8",
+            )
+            manifest = steamapps / "appmanifest_777.acf"
+            manifest.write_text(
+                '"AppState"\n'
+                "{\n"
+                '\t"appid"\t\t"777"\n'
+                '\t"name"\t\t"Blocked Game"\n'
+                '\t"StateFlags"\t\t"6"\n'
+                '\t"installdir"\t\t"Blocked Game"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result = repair_lumatools_library_manifests([str(library)])
+
+            self.assertEqual(result["repaired"], ["777"])
+            self.assertEqual(result["decryption_key_blocked"], ["777"])
+            self.assertIn(
+                "Missing decryption key",
+                detect_recent_decryption_key_issue(library, "777"),
+            )
 
     def test_skips_unmanaged_games(self):
         with tempfile.TemporaryDirectory() as tmp:

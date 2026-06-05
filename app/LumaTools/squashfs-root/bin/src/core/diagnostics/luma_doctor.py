@@ -73,6 +73,15 @@ def inspect_appmanifest(acf_path: str | os.PathLike[str]) -> dict[str, Any]:
         issues.append("installdir_missing")
     if not fields.get("LastOwner") or fields.get("LastOwner") == "0":
         issues.append("lastowner_missing_or_zero")
+    decryption_key_log = ""
+    try:
+        from utils.steam_manifest import detect_recent_decryption_key_issue
+
+        decryption_key_log = detect_recent_decryption_key_issue(library, appid)
+    except Exception:
+        decryption_key_log = ""
+    if decryption_key_log:
+        issues.append("missing_decryption_key")
 
     return {
         "appid": str(appid),
@@ -84,6 +93,7 @@ def inspect_appmanifest(acf_path: str | os.PathLike[str]) -> dict[str, Any]:
         "dlc_marker": bool(installdir and (game_dir / "LUMA_DLC_CONTENT_INFO.json").exists()),
         "fields": fields,
         "issues": issues,
+        "decryption_key_log": decryption_key_log,
     }
 
 

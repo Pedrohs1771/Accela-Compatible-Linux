@@ -276,6 +276,14 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
         with open(acf_path, "r", encoding="utf-8", errors="ignore") as handle:
             content = handle.read()
 
+        installdir = _parse_acf_value(content, "installdir")
+        size_on_disk = _parse_acf_value(content, "SizeOnDisk")
+        if installdir:
+            game_dir = Path(dest_path) / "steamapps" / "common" / installdir
+            computed_size = _compute_directory_size(game_dir)
+            if computed_size > 0 and (not size_on_disk.isdigit() or int(size_on_disk) <= 0):
+                size_on_disk = str(computed_size)
+
         replacements = {
             "StateFlags": "4",
             "UpdateResult": "0",
@@ -290,6 +298,8 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
             "AutoUpdateBehavior": "1",
             "LastUpdated": str(int(time.time())),
         }
+        if size_on_disk and size_on_disk.isdigit() and int(size_on_disk) > 0:
+            replacements["SizeOnDisk"] = size_on_disk
         last_owner = get_active_steam_owner(dest_path)
         if last_owner != "0":
             replacements["LastOwner"] = last_owner
@@ -316,10 +326,31 @@ def repair_installed_app_state(dest_path: str, appid: str, logger=None) -> bool:
         with open(acf_path, "w", encoding="utf-8") as handle:
             handle.write(content)
 
-        for folder in ("downloading", "temp"):
+        for folder in ("downloading", "temp", "shadercache"):
             path = os.path.join(steamapps_dir, folder, str(appid))
             if os.path.exists(path):
                 shutil.rmtree(path, ignore_errors=True)
+
+        # Steam can leave state files around after an interrupted validation.
+        for state_file in (
+            os.path.join(steamapps_dir, f"appmanifest_{appid}.acf.tmp"),
+            os.path.join(steamapps_dir, f"appmanifest_{appid}.acf.old"),
+        ):
+            if os.path.exists(state_file):
+                try:
+                    os.remove(state_file)
+                except OSError:
+                    pass
+
+        decryption_issue = detect_recent_decryption_key_issue(dest_path, appid)
+        if decryption_issue and logger:
+            logger.warning(
+                "Steam recusou update/prefetch do AppID %s por falta de chave de depot. "
+                "O Luma reparou o manifest/cache, mas a Steam pode continuar pedindo update "
+                "ate a conta ter acesso ao depot. Ultimo log: %s",
+                appid,
+                decryption_issue,
+            )
 
         if logger:
             logger.info("Steam appmanifest reparado para AppID %s", appid)
@@ -344,6 +375,60 @@ def _parse_acf_value(content: str, key: str) -> str:
     return match.group(1) if match else ""
 
 
+def _compute_directory_size(path: Path) -> int:
+    if not path.is_dir():
+        return 0
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            file_path = os.path.join(root, name)
+            try:
+                total += os.path.getsize(file_path)
+            except OSError:
+                continue
+    return total
+
+
+def detect_recent_decryption_key_issue(
+    steam_root_or_library: str | os.PathLike[str] | None,
+    appid: str | int,
+    *,
+    max_lines: int = 700,
+) -> str:
+    """Return the last Steam content log line showing a depot key failure.
+
+    This is diagnostic only. A "Missing decryption key" line means Steam itself
+    cannot initialize one of the app's depots, so resetting appmanifest state
+    may clear stale update flags but cannot make Steam download that depot.
+    """
+    if not steam_root_or_library or not appid:
+        return ""
+
+    root = Path(steam_root_or_library).expanduser()
+    candidates = [
+        root / "logs" / "content_log.txt",
+        root.parent / "logs" / "content_log.txt",
+    ]
+    appid_text = str(appid)
+    last_match = ""
+
+    for log_path in candidates:
+        if not log_path.is_file():
+            continue
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        for line in lines[-max_lines:]:
+            if (
+                f"AppID {appid_text}" in line
+                and "Missing decryption key" in line
+            ):
+                last_match = line.strip()
+
+    return last_match
+
+
 def _is_lumatools_managed_game(game_dir: Path) -> bool:
     if not game_dir.is_dir():
         return False
@@ -363,6 +448,7 @@ def repair_lumatools_library_manifests(
     repaired: list[str] = []
     skipped: list[str] = []
     failed: list[str] = []
+    decryption_key_blocked: list[str] = []
     seen: set[str] = set()
 
     for library_path in library_paths or []:
@@ -398,14 +484,22 @@ def repair_lumatools_library_manifests(
 
             if repair_installed_app_state(str(library), appid, logger=logger):
                 repaired.append(appid)
+                if detect_recent_decryption_key_issue(str(library), appid):
+                    decryption_key_blocked.append(appid)
             else:
                 failed.append(appid)
 
     if logger:
         logger.info(
-            "Reparo global de manifests LumaTools: %s reparado(s), %s ignorado(s), %s falha(s).",
+            "Reparo global de manifests LumaTools: %s reparado(s), %s ignorado(s), %s falha(s), %s bloqueado(s) por chave de depot.",
             len(repaired),
             len(skipped),
             len(failed),
+            len(decryption_key_blocked),
         )
-    return {"repaired": repaired, "skipped": skipped, "failed": failed}
+    return {
+        "repaired": repaired,
+        "skipped": skipped,
+        "failed": failed,
+        "decryption_key_blocked": decryption_key_blocked,
+    }

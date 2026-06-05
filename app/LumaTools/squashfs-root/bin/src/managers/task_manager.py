@@ -343,6 +343,13 @@ class TaskManager(QObject):
 
         libraries = steam_helpers.get_steam_libraries()
         if libraries:
+            preferred_library = steam_helpers.get_preferred_steam_library()
+            if preferred_library and preferred_library in libraries:
+                logger.info(
+                    "Auto-selected Steam library for active Steam mode: %s",
+                    preferred_library,
+                )
+                return preferred_library
             if len(libraries) == 1:
                 return libraries[0]
             dialog = SteamLibraryDialog(libraries, self.main_window)

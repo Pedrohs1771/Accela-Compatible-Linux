@@ -187,6 +187,13 @@ def run_cli_mode(
         if slssteam_mode_local or library_mode:
             libraries = get_steam_libraries()
             if libraries:
+                preferred_library = get_preferred_steam_library()
+                if preferred_library and preferred_library in libraries:
+                    logger.info(
+                        "Auto-selected Steam library for active Steam mode: %s",
+                        preferred_library,
+                    )
+                    return preferred_library
                 if len(libraries) == 1:
                     return libraries[0]
                 path = select_steam_library(libraries)

@@ -99,6 +99,7 @@ def _classify_steam_process(comm: str, cmdline: str, environ: str = "") -> Optio
     cmd = (cmdline or "").strip().lower()
     env = (environ or "").lower()
     first_arg = Path(cmd.split(" ", 1)[0]).name if cmd else ""
+    flatpak_marker = f".var/app/{FLATPAK_APP_ID.lower()}"
 
     is_flatpak_steam = (
         name == "flatpak"
@@ -118,7 +119,13 @@ def _classify_steam_process(comm: str, cmdline: str, environ: str = "") -> Optio
 
     if not (is_flatpak_steam or is_snap_steam or is_steam_binary):
         return None
-    if is_flatpak_steam or FLATPAK_APP_ID.lower() in cmd or FLATPAK_APP_ID.lower() in env:
+    if (
+        is_flatpak_steam
+        or FLATPAK_APP_ID.lower() in cmd
+        or FLATPAK_APP_ID.lower() in env
+        or flatpak_marker in cmd
+        or flatpak_marker in env
+    ):
         return "flatpak"
     if is_snap_steam or "snap/steam" in cmd or "snap/steam" in env:
         return "snap"
@@ -136,6 +143,8 @@ def detect_running_steam_mode() -> Optional[str]:
     if not proc.is_dir():
         return None
 
+    detected_modes: set[str] = set()
+
     for pid_dir in proc.iterdir():
         if not pid_dir.name.isdigit():
             continue
@@ -144,7 +153,14 @@ def detect_running_steam_mode() -> Optional[str]:
         environ = _read_proc_environ(pid_dir)
         mode = _classify_steam_process(comm, cmdline, environ)
         if mode:
-            return mode
+            detected_modes.add(mode)
+
+    # A Flatpak Steam session spawns helper processes whose names can look
+    # native. If any running Steam process clearly belongs to Flatpak, that is
+    # the active Steam mode.
+    for preferred in ("flatpak", "snap", "native"):
+        if preferred in detected_modes:
+            return preferred
     return None
 
 

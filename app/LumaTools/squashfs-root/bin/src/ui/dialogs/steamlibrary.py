@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.dialogs.dialog_helpers import create_standard_buttons
+from core import steam_helpers
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,9 @@ class SteamLibraryDialog(QDialog):
 
         # Keep backend order intact. On Linux this puts the library belonging
         # to the currently running Steam mode (native/Flatpak/Snap) first.
+        preferred_library = steam_helpers.get_preferred_steam_library()
         for index, path in enumerate(library_paths):
-            item = QListWidgetItem(self._display_path(path, index))
+            item = QListWidgetItem(self._display_path(path, preferred_library))
             item.setData(Qt.ItemDataRole.UserRole, path)
             # Explicitly set size hint to prevent overlap
             item.setSizeHint(QSize(0, 24))
@@ -79,8 +81,8 @@ class SteamLibraryDialog(QDialog):
         return self.selected_path
 
     @staticmethod
-    def _display_path(path: str, index: int) -> str:
-        label = "Steam em uso" if index == 0 else "biblioteca extra"
+    def _display_path(path: str, preferred_library: Optional[str] = None) -> str:
+        label = "Steam em uso" if path == preferred_library else "biblioteca extra"
         if "/.var/app/com.valvesoftware.Steam/" in path:
             label += " / Flatpak"
         elif "/snap/steam/" in path:
