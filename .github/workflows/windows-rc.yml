@@ -1,0 +1,96 @@
+name: windows-rc
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "release/windows-v*-rc"
+      - "release/windows-v1.1.0-rc"
+  pull_request:
+
+jobs:
+  linux-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Linux test deps
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r app/LumaTools/squashfs-root/bin/requirements.txt
+      - name: Compile
+        run: python -m compileall app/LumaTools/squashfs-root/bin/src tests tools
+      - name: Unit tests
+        env:
+          PYTHONPATH: app/LumaTools/squashfs-root/bin/src
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+
+  windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Windows test deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r app/LumaTools/squashfs-root/bin/requirements.txt
+      - name: Compile
+        shell: pwsh
+        run: python -m compileall app/LumaTools/squashfs-root/bin/src tests tools windows
+      - name: Unit tests
+        shell: pwsh
+        env:
+          PYTHONPATH: app/LumaTools/squashfs-root/bin/src
+        run: python -m unittest discover -s tests -v
+
+  windows-build:
+    runs-on: windows-latest
+    needs:
+      - linux-regression
+      - windows-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel pyinstaller
+          python -m pip install -r app/LumaTools/squashfs-root/bin/requirements.txt
+      - name: Build Windows RC
+        shell: pwsh
+        run: python tools/build_windows.py
+      - name: Smoke LumaDoctor
+        shell: pwsh
+        run: .\dist\windows\LumaTools\LumaDoctor.exe --self-test
+      - name: Write CI report
+        shell: pwsh
+        run: |
+          $report = @"
+          # QA Windows CI Report
+
+          Status: APPROVED_RC_BY_CI
+
+          - Runner: windows-latest
+          - Python: 3.12
+          - Unit tests: passed
+          - PyInstaller build: passed
+          - LumaDoctor.exe --self-test: passed
+          - Artifact: LumaTools-Windows-v1.1.0-rc.zip
+          "@
+          $report | Set-Content -Path QA_WINDOWS_CI_REPORT.md -Encoding UTF8
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LumaTools-Windows-v1.1.0-rc
+          path: |
+            dist/LumaTools-Windows-v1.1.0-rc.zip
+            dist/SHA256SUMS.txt
+            QA_WINDOWS_CI_REPORT.md
