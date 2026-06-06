@@ -17,6 +17,10 @@ from urllib.parse import quote_plus
 import requests
 from bs4 import BeautifulSoup
 
+from core.workshop.workshop_installer import WorkshopInstaller
+from core.workshop.workshop_errors import WorkshopError
+from core.workshop.workshop_profiles import resolve_workshop_profile
+from core.workshop.workshop_resolver import WorkshopResolver
 from utils.helpers import get_base_path
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,7 @@ class WorkshopManager:
         }
         self.process: subprocess.Popen[str] | None = None
         self.lock = threading.Lock()
+        self.installer = WorkshopInstaller()
 
     @staticmethod
     def parse_workshop_id(value: str) -> str | None:
@@ -277,20 +282,7 @@ class WorkshopManager:
 
     @staticmethod
     def detect_mod_target(game_dir: str | os.PathLike[str]) -> Path:
-        root = Path(game_dir).expanduser().resolve()
-        checks = [
-            (root / "Content" / "Paks", root / "Content" / "Paks" / "~mods"),
-            (root / "BepInEx" / "plugins", root / "BepInEx" / "plugins"),
-            (root / "MelonLoader" / "Mods", root / "MelonLoader" / "Mods"),
-            (root / "gameinfo.txt", root / "custom"),
-            (root / "addons", root / "addons"),
-            (root / "Mods", root / "Mods"),
-            (root / "mods", root / "mods"),
-        ]
-        for marker, target in checks:
-            if marker.exists():
-                return target
-        return root / "Workshop"
+        return Path(resolve_workshop_profile(game_dir).target_root)
 
     def download_item(self, appid: int | str, pubfile_id: int | str, download_dir: str | None = None):
         thread = threading.Thread(
@@ -305,8 +297,17 @@ class WorkshopManager:
         appid: int | str,
         pubfile_id: int | str,
         game_dir: str | os.PathLike[str] | None = None,
+        username: str = "",
+        password: str = "",
     ) -> dict[str, Any]:
-        return self._run_download(str(appid), str(pubfile_id), None, game_dir=game_dir)
+        return self._run_download(
+            str(appid),
+            str(pubfile_id),
+            None,
+            game_dir=game_dir,
+            username=username,
+            password=password,
+        )
 
     def _run_download(
         self,
@@ -314,6 +315,8 @@ class WorkshopManager:
         pubfile_id: str,
         download_dir: str | None,
         game_dir: str | os.PathLike[str] | None = None,
+        username: str = "",
+        password: str = "",
     ) -> dict[str, Any]:
         with self.lock:
             if self.state["status"] == "downloading":
@@ -342,53 +345,45 @@ class WorkshopManager:
 
         target_root = Path(download_dir or self.download_root).expanduser().resolve()
         target_root.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            steamcmd,
-            "+force_install_dir",
-            str(target_root),
-            "+login",
-            "anonymous",
-            "+workshop_download_item",
-            str(appid),
-            str(pubfile_id),
-            "+quit",
-        ]
-        logger.info("Executing SteamCMD Workshop download: %s", " ".join(cmd))
 
         try:
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            assert self.process.stdout is not None
-            for line in self.process.stdout:
-                text = line.strip()
-                if not text:
-                    continue
+            resolver = WorkshopResolver(steamcmd)
+
+            def on_line(text: str) -> None:
                 with self.lock:
                     self.state["message"] = text
                     if "Success. Downloaded item" in text:
                         self.state["progress"] = 100.0
 
-            rc = self.process.wait()
-            if rc != 0:
-                raise RuntimeError(f"SteamCMD terminou com codigo {rc}.")
-
-            download_path = self._find_download_path(target_root, appid, pubfile_id)
-            installed_path = ""
-            if game_dir and download_path:
-                installed_path = str(self.install_item_to_game(download_path, pubfile_id, game_dir))
-
-            record = self.register_item(
+            download_path = resolver.download(
                 appid=appid,
                 workshop_id=pubfile_id,
-                download_path=str(download_path) if download_path else "",
-                installed_path=installed_path,
+                target_root=target_root,
+                username=username,
+                password=password,
+                on_line=on_line,
+                on_process=lambda process: setattr(self, "process", process),
             )
+            if game_dir:
+                record = self.installer.install(
+                    appid=appid,
+                    workshop_id=pubfile_id,
+                    source=download_path,
+                    game_dir=game_dir,
+                )
+            else:
+                record = {
+                    "appid": appid,
+                    "workshop_id": pubfile_id,
+                    "title": f"Workshop {pubfile_id}",
+                    "source": "steamcmd",
+                    "download_path": str(download_path),
+                    "installed_path": "",
+                    "enabled": False,
+                    "status": "public_downloaded" if not username else "downloaded",
+                    "last_checked": datetime.now(timezone.utc).isoformat(),
+                }
+            self._upsert_record(record)
             with self.lock:
                 self.state.update(
                     {
@@ -398,6 +393,21 @@ class WorkshopManager:
                     }
                 )
             return record
+        except WorkshopError as exc:
+            with self.lock:
+                self.state.update(
+                    {
+                        "status": "failed",
+                        "message": str(exc),
+                        "last_error": exc.code.value,
+                    }
+                )
+            logger.error(
+                "Workshop download failed: %s (%s)",
+                exc.code.value,
+                exc.details,
+            )
+            raise
         except Exception as exc:
             with self.lock:
                 self.state.update(
@@ -408,15 +418,7 @@ class WorkshopManager:
 
     @staticmethod
     def _find_download_path(root: Path, appid: str, itemid: str) -> Path | None:
-        candidates = [
-            root / "steamapps" / "workshop" / "content" / str(appid) / str(itemid),
-            root / "workshop" / "content" / str(appid) / str(itemid),
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-        matches = list(root.rglob(str(itemid)))
-        return matches[0] if matches else None
+        return WorkshopResolver.find_download_path(root, str(appid), str(itemid))
 
     def install_item_to_game(
         self,
@@ -424,17 +426,26 @@ class WorkshopManager:
         itemid: str,
         game_dir: str | os.PathLike[str],
     ) -> Path:
-        source = Path(download_path).expanduser().resolve()
-        if not source.exists():
-            raise FileNotFoundError(f"Workshop item nao encontrado: {source}")
+        record = self.installer.install(
+            appid="",
+            workshop_id=str(itemid),
+            source=download_path,
+            game_dir=game_dir,
+        )
+        return Path(record["installed_path"])
 
-        target_root = self.detect_mod_target(game_dir)
-        target = target_root / str(itemid)
-        target_root.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(source, target)
-        return target
+    def _upsert_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        items = [
+            item
+            for item in self.load_registry()
+            if not (
+                str(item.get("appid")) == str(record.get("appid"))
+                and str(item.get("workshop_id")) == str(record.get("workshop_id"))
+            )
+        ]
+        items.append(record)
+        self.save_registry(items)
+        return record
 
     def register_item(
         self,
@@ -444,14 +455,6 @@ class WorkshopManager:
         installed_path: str = "",
         title: str = "",
     ) -> dict[str, Any]:
-        items = [
-            item
-            for item in self.load_registry()
-            if not (
-                str(item.get("appid")) == str(appid)
-                and str(item.get("workshop_id")) == str(workshop_id)
-            )
-        ]
         record = {
             "appid": str(appid),
             "workshop_id": str(workshop_id),
@@ -462,20 +465,41 @@ class WorkshopManager:
             "enabled": True,
             "last_checked": datetime.now(timezone.utc).isoformat(),
         }
-        items.append(record)
-        self.save_registry(items)
-        return record
+        return self._upsert_record(record)
 
     def set_enabled(self, appid: str, workshop_id: str, enabled: bool) -> bool:
         changed = False
         items = self.load_registry()
         for item in items:
             if str(item.get("appid")) == str(appid) and str(item.get("workshop_id")) == str(workshop_id):
-                item["enabled"] = bool(enabled)
+                self.installer.set_enabled(item, bool(enabled))
                 changed = True
         if changed:
             self.save_registry(items)
         return changed
+
+    def uninstall_item(self, appid: str, workshop_id: str) -> bool:
+        changed = False
+        items = self.load_registry()
+        for item in items:
+            if (
+                str(item.get("appid")) == str(appid)
+                and str(item.get("workshop_id")) == str(workshop_id)
+            ):
+                self.installer.uninstall(item)
+                changed = True
+        if changed:
+            self.save_registry(items)
+        return changed
+
+    def repair_item(self, appid: str, workshop_id: str) -> dict[str, Any]:
+        for item in self.load_registry():
+            if (
+                str(item.get("appid")) == str(appid)
+                and str(item.get("workshop_id")) == str(workshop_id)
+            ):
+                return self.installer.repair(item)
+        return {"ok": False, "issues": ["registry_entry_missing"]}
 
     def get_status(self) -> dict[str, Any]:
         with self.lock:

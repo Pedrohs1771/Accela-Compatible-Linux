@@ -1,4 +1,5 @@
 import logging
+import glob
 import os
 import re
 import shutil
@@ -516,6 +517,7 @@ class TaskManager(QObject):
         try:
             self._finalize_acf_and_manifests(size_on_disk)
             self._persist_wrapper_metadata()
+            self._prefetch_current_package_dlcs()
             self._finalize_platform_specifics(config_enabled)
             self._finalize_goldberg(auto_apply_goldberg)
             self._finalize_online_fix()
@@ -567,6 +569,32 @@ class TaskManager(QObject):
             logger.debug(
                 f"Persisted wrapper metadata for AppID {appid} with {len(selected_dlcs)} DLC ID(s)"
             )
+
+    def _prefetch_current_package_dlcs(self) -> None:
+        if not self.current_job:
+            return
+        package = Path(self.current_job)
+        if not package.is_file() or package.suffix.lower() != ".zip":
+            return
+        try:
+            from core.content_manager import ContentManager
+
+            report = ContentManager().prefetch_package(
+                package,
+                source=str((self.current_job_metadata or {}).get("source") or "install_zip"),
+                game_dir=(
+                    get_game_directory(self.current_dest_path, self.game_data)
+                    if self.current_dest_path and self.game_data
+                    else None
+                ),
+            )
+            logger.info(
+                "DLC prefetch scanned %s item(s) for AppID %s",
+                len(report.get("dlcs", [])),
+                report.get("base_appid", ""),
+            )
+        except Exception:
+            logger.warning("DLC prefetch failed for %s", package, exc_info=True)
 
     def _finalize_platform_specifics(self, config_enabled: bool):
         # 4. Linux Permissions
@@ -885,21 +913,30 @@ class TaskManager(QObject):
             self._finalize_job_logic()
             return
 
-        game_name = self.game_data.get("game_name", "Jogo") if self.game_data else "Jogo"
-        prompt = QMessageBox(self.main_window)
-        prompt.setWindowTitle("Ryuu Fix")
-        prompt.setText(f"Fix Ryuu encontrado para {game_name}. Deseja aplicar agora?")
-        apply_button = prompt.addButton("Aplicar fix", QMessageBox.ButtonRole.AcceptRole)
-        prompt.addButton("Pular", QMessageBox.ButtonRole.RejectRole)
-        prompt.setDefaultButton(apply_button)
-        prompt.exec()
-        if prompt.clickedButton() != apply_button:
-            self._ryuu_status = {"status": "skipped", "message": "Usuario pulou Ryuu Fix."}
-            self._finalize_job_logic()
-            return
+        try:
+            from core.content_manager import ContentManager
 
-        self.main_window.drop_text_label.setText(f"Aplicando Ryuu Fix em {game_name}...")
-        threading.Thread(target=self._run_ryuu_apply_worker, daemon=True).start()
+            report = ContentManager().prefetch_package(
+                self._pending_ryuu_fix_path,
+                source="ryuu",
+                game_dir=(
+                    get_game_directory(self.current_dest_path, self.game_data)
+                    if self.current_dest_path and self.game_data
+                    else None
+                ),
+            )
+            cached = sum(
+                item.get("status") == "cached_installable"
+                for item in report.get("dlcs", [])
+            )
+            self._ryuu_status = {
+                "status": "prefetched",
+                "message": f"Ryuu analisado; {cached} DLC(s) pronta(s) no cache.",
+            }
+        except Exception as exc:
+            self._ryuu_status = {"status": "prefetch_error", "message": str(exc)}
+            logger.warning("Falha no prefetch DLC Ryuu", exc_info=True)
+        self._finalize_job_logic()
 
     def _run_ryuu_apply_worker(self) -> None:
         try:
@@ -1007,27 +1044,45 @@ class TaskManager(QObject):
         if not self.game_data or not self.current_dest_path:
             return
 
-        temp_manifest_dir = os.path.join(tempfile.gettempdir(), "mistwalker_manifests")
-        if not os.path.exists(temp_manifest_dir):
-            return
-
         target_depotcache_dir = os.path.join(self.current_dest_path, "depotcache")
+        fixed_manifest_dir = os.path.join(tempfile.gettempdir(), "mistwalker_manifests")
+        manifest_dirs = []
+        if os.path.isdir(fixed_manifest_dir):
+            manifest_dirs.append(fixed_manifest_dir)
+
+        manifest_dirs.extend(
+            path
+            for path in glob.glob(os.path.join(tempfile.gettempdir(), "lumatools-job-*", "manifests"))
+            if os.path.isdir(path)
+        )
 
         try:
             os.makedirs(target_depotcache_dir, exist_ok=True)
             manifests_map = self.game_data.get("manifests", {})
             if not manifests_map:
-                shutil.rmtree(temp_manifest_dir)
+                if os.path.isdir(fixed_manifest_dir):
+                    shutil.rmtree(fixed_manifest_dir)
                 return
 
+            moved_count = 0
             for depot_id, manifest_gid in manifests_map.items():
                 manifest_filename = f"{depot_id}_{manifest_gid}.manifest"
-                source_path = os.path.join(temp_manifest_dir, manifest_filename)
+                source_path = next(
+                    (
+                        os.path.join(manifest_dir, manifest_filename)
+                        for manifest_dir in manifest_dirs
+                        if os.path.exists(os.path.join(manifest_dir, manifest_filename))
+                    ),
+                    "",
+                )
                 dest_path = os.path.join(target_depotcache_dir, manifest_filename)
-                if os.path.exists(source_path):
+                if source_path:
                     shutil.move(source_path, dest_path)
+                    moved_count += 1
 
-            shutil.rmtree(temp_manifest_dir)
+            logger.info("Moved %s manifest(s) to depotcache.", moved_count)
+            if os.path.isdir(fixed_manifest_dir):
+                shutil.rmtree(fixed_manifest_dir)
         except OSError as e:
             logger.error(f"Failed to move manifests to depotcache: {e}")
 

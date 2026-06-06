@@ -64,7 +64,9 @@ class RyuuClient:
         extension = {"lua": "lua", "manifest": "zip"}.get(file_type, "zip")
         suffix = f"-{file_type}" if file_type else "-full"
         branch_suffix = "" if branch == "public" else f"-{branch}"
-        target = output_dir / appid / f"ryuu-{appid}{branch_suffix}{suffix}.{extension}"
+        output_dir = Path(output_dir).expanduser()
+        app_dir = output_dir if output_dir.name == appid else output_dir / appid
+        target = app_dir / f"ryuu-{appid}{branch_suffix}{suffix}.{extension}"
         target.parent.mkdir(parents=True, exist_ok=True)
 
         response = self._get(f"/api/download/{appid}", params=params, stream=True)

@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from core import ryuu_client
 
@@ -24,6 +25,21 @@ class RyuuClientLocalSecretsTests(unittest.TestCase):
                     os.environ.pop("XDG_CONFIG_HOME", None)
                 else:
                     os.environ["XDG_CONFIG_HOME"] = old_config
+
+    def test_download_target_does_not_duplicate_appid_directory(self):
+        client = ryuu_client.RyuuClient("x" * 16)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            response = mock.Mock()
+            response.iter_content.return_value = [b"zip"]
+            client._get = mock.Mock(return_value=response)
+
+            first = client.download("307110", root)
+            nested = client.download("307110", root / "307110")
+
+            expected = root / "307110" / "ryuu-307110-full.zip"
+            self.assertEqual(first, expected)
+            self.assertEqual(nested, expected)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -28,6 +29,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DOWNLOADS = 8
 MAX_SAFE_DOWNLOADS = 32
 
+ENCRYPTED_CONTENT_PATTERNS = (
+    "content still encrypted",
+    "still encrypted",
+    "missing decryption key",
+    "unable to get depot decryption key",
+    "no decryption key",
+    "depot encrypted",
+)
+
 
 class DownloadDepotsTask(QObject):
     """
@@ -38,7 +48,7 @@ class DownloadDepotsTask(QObject):
     progress = pyqtSignal(str)
     progress_percentage = pyqtSignal(int)
     completed = pyqtSignal()
-    error = pyqtSignal()
+    error = pyqtSignal(tuple)
 
     def __init__(self):
         super().__init__()
@@ -52,6 +62,22 @@ class DownloadDepotsTask(QObject):
         self.current_depot_size = 0
         self._last_log_time = 0
         self._log_buffer = []
+        self._last_status_emit_time = 0
+        self._last_status_percentage = -1
+        self.commands_started = 0
+        self.failed_depots: List[Dict[str, Any]] = []
+        self.skipped_depots: List[str] = []
+        self.return_codes: Dict[str, int] = {}
+        self.last_error_reason = ""
+        self.encrypted_content_detected = False
+        self._current_depot_encrypted = False
+        self._current_depot_id = ""
+        self._download_file_line_regex = re.compile(
+            r"^\d{1,3}(?:\.\d{1,2})?%\s+(?:/|[A-Za-z]:\\|\\\\)"
+        )
+        self._prealloc_line_regex = re.compile(
+            r"^Pre-allocating\s+(?:/|[A-Za-z]:\\|\\\\)"
+        )
 
     @property
     def is_running_flag(self) -> bool:
@@ -81,13 +107,13 @@ class DownloadDepotsTask(QObject):
             commands, skipped_depots, depot_sizes = self._prepare_downloads(
                 game_data, selected_depots, dest_path
             )
+            self.skipped_depots = skipped_depots
 
             if not commands:
-                self.progress.emit(
-                    "No valid download commands to execute. Task finished."
-                )
-                self.completed.emit()
-                return
+                self.last_error_reason = "No valid download commands to execute."
+                self.progress.emit(f"ERROR: {self.last_error_reason}")
+                logger.error(self.last_error_reason)
+                raise RuntimeError(self.last_error_reason)
 
             total_depots = len(commands)
             self.total_download_size_for_this_job = sum(depot_sizes)
@@ -105,6 +131,8 @@ class DownloadDepotsTask(QObject):
                 depot_id = current_cmd[
                     5
                 ]  # 'dotnet', 'dll', '-app', 'id', '-depot', 'id'
+                self._current_depot_id = str(depot_id)
+                self._current_depot_encrypted = False
                 self.current_depot_size = depot_sizes[i]
 
                 self.progress.emit(
@@ -126,6 +154,7 @@ class DownloadDepotsTask(QObject):
                     text=False,  # Binary mode
                     creationflags=creation_flags,
                 )
+                self.commands_started += 1
 
                 # Read output directly in this thread
                 self._read_process_output()
@@ -145,14 +174,48 @@ class DownloadDepotsTask(QObject):
                     return_code = self.process.poll()
                     self.process = None
 
-                if return_code != 0:
+                if self._current_depot_encrypted:
                     msg = (
-                        f"Warning: DepotDownloader exited with code "
-                        f"{return_code} for depot {depot_id}."
+                        "ERROR: Depot content is encrypted or unsupported for "
+                        f"depot {depot_id}."
                     )
                     self.progress.emit(msg)
-                    logger.warning(msg)
+                    logger.error(msg)
+                    self.return_codes[str(depot_id)] = int(return_code or 1)
+                    self.failed_depots.append(
+                        {
+                            "depot_id": str(depot_id),
+                            "return_code": int(return_code or 1),
+                            "status": "encrypted_content_or_unsupported_depot",
+                        }
+                    )
+                    break
+                if return_code != 0:
+                    if self._can_accept_validated_nonzero_exit(
+                        game_data, dest_path, str(depot_id)
+                    ):
+                        msg = (
+                            f"Warning: DepotDownloader exited with code {return_code} "
+                            f"for depot {depot_id}, but installed files validated. "
+                            "Continuing with finalization."
+                        )
+                        self.progress.emit("Download validado com arquivos existentes.")
+                        logger.warning(msg)
+                        self.return_codes[str(depot_id)] = int(return_code)
+                        self.completed_so_far_for_this_job += self.current_depot_size
+                    else:
+                        msg = (
+                            f"ERROR: DepotDownloader exited with code "
+                            f"{return_code} for depot {depot_id}."
+                        )
+                        self.progress.emit(msg)
+                        logger.error(msg)
+                        self.return_codes[str(depot_id)] = int(return_code)
+                        self.failed_depots.append(
+                            {"depot_id": str(depot_id), "return_code": int(return_code)}
+                        )
                 else:
+                    self.return_codes[str(depot_id)] = 0
                     self.completed_so_far_for_this_job += self.current_depot_size
 
             if skipped_depots:
@@ -165,6 +228,26 @@ class DownloadDepotsTask(QObject):
                 logger.info("Download task stopped before cleanup.")
                 self.completed.emit()
                 return
+
+            game_dir = self._get_download_dir(game_data, dest_path)
+            if self.failed_depots:
+                depot_list = ", ".join(
+                    f"{item['depot_id']}={item['return_code']}"
+                    for item in self.failed_depots
+                )
+                self.last_error_reason = f"Depot download failed: {depot_list}"
+                self._cleanup_failed_download_state(game_data, dest_path)
+                raise RuntimeError(self.last_error_reason)
+
+            if self.commands_started <= 0:
+                self.last_error_reason = "No depot download command was started."
+                self._cleanup_failed_download_state(game_data, dest_path)
+                raise RuntimeError(self.last_error_reason)
+
+            if not os.path.isdir(game_dir) or self._directory_size(game_dir) <= 0:
+                self.last_error_reason = f"Downloaded game directory is empty: {game_dir}"
+                self._cleanup_failed_download_state(game_data, dest_path)
+                raise RuntimeError(self.last_error_reason)
 
             self._cleanup_temp_files()
             self.completed.emit()
@@ -180,15 +263,150 @@ class DownloadDepotsTask(QObject):
             )
             self.progress.emit(error_msg)
             logger.critical(f"'{binary}' not found.")
-            self.error.emit()
+            self.error.emit((FileNotFoundError, error_msg, None))
             raise
 
         except (OSError, subprocess.SubprocessError) as e:
             self.progress.emit(f"An unexpected error occurred during download: {e}")
             logger.error(f"Download subprocess failed: {e}", exc_info=True)
             self.process = None
-            self.error.emit()
+            self.error.emit((type(e), e, None))
             raise
+
+    @staticmethod
+    def _get_install_folder_name(game_data: Dict[str, Any]) -> str:
+        safe_game_name_fallback = (
+            re.sub(r"[^\w\s-]", "", game_data.get("game_name", ""))
+            .strip()
+            .replace(" ", "_")
+        )
+        install_folder_name = game_data.get("installdir", safe_game_name_fallback)
+        if not install_folder_name:
+            install_folder_name = f"App_{game_data['appid']}"
+        return install_folder_name
+
+    def _get_download_dir(self, game_data: Dict[str, Any], dest_path: str) -> str:
+        return os.path.join(
+            dest_path,
+            "steamapps",
+            "common",
+            self._get_install_folder_name(game_data),
+        )
+
+    @staticmethod
+    def _directory_size(path: str) -> int:
+        total = 0
+        try:
+            for root, _, files in os.walk(path):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    try:
+                        total += os.path.getsize(file_path)
+                    except OSError:
+                        continue
+        except OSError:
+            return 0
+        return total
+
+    def _can_accept_validated_nonzero_exit(
+        self, game_data: Dict[str, Any], dest_path: str, depot_id: str
+    ) -> bool:
+        if self._current_depot_encrypted or self.encrypted_content_detected:
+            logger.error(
+                "Refusing non-zero DepotDownloader exit for depot %s: encrypted content detected.",
+                depot_id,
+            )
+            return False
+
+        game_dir = self._get_download_dir(game_data, dest_path)
+        actual_size = self._directory_size(game_dir)
+        if actual_size <= 0:
+            logger.error(
+                "Refusing non-zero DepotDownloader exit for depot %s: game directory is empty.",
+                depot_id,
+            )
+            return False
+
+        expected_size = self.current_depot_size
+        if expected_size <= 0:
+            try:
+                expected_size = int(
+                    game_data.get("depots", {}).get(str(depot_id), {}).get("size") or 0
+                )
+            except (TypeError, ValueError):
+                expected_size = 0
+
+        if expected_size <= 0:
+            logger.error(
+                "Refusing non-zero DepotDownloader exit for depot %s: no expected depot size.",
+                depot_id,
+            )
+            return False
+
+        ratio = actual_size / float(expected_size)
+        if ratio < 0.95:
+            logger.error(
+                "Refusing non-zero DepotDownloader exit for depot %s: installed size "
+                "%s is below expected %s (%.2f%%).",
+                depot_id,
+                actual_size,
+                expected_size,
+                ratio * 100,
+            )
+            return False
+
+        logger.warning(
+            "Accepting non-zero DepotDownloader exit for depot %s after validation: "
+            "installed size %s / expected %s (%.2f%%).",
+            depot_id,
+            actual_size,
+            expected_size,
+            ratio * 100,
+        )
+        return True
+
+    def _cleanup_failed_download_state(
+        self, game_data: Dict[str, Any], dest_path: str
+    ) -> None:
+        appid = str(game_data.get("appid", "")).strip()
+        steamapps_dir = os.path.join(dest_path, "steamapps")
+        game_dir = self._get_download_dir(game_data, dest_path)
+        for queue_name in ("downloading", "temp", "shadercache"):
+            candidates = [
+                os.path.join(steamapps_dir, queue_name, appid),
+                os.path.join(steamapps_dir, queue_name, f"appmanifest_{appid}.acf"),
+            ]
+            for candidate in candidates:
+                if not candidate or not os.path.exists(candidate):
+                    continue
+                try:
+                    if os.path.isdir(candidate):
+                        shutil.rmtree(candidate)
+                    else:
+                        os.remove(candidate)
+                    logger.info("Removed failed download state: %s", candidate)
+                except OSError as exc:
+                    logger.warning("Failed to remove failed download state %s: %s", candidate, exc)
+
+        try:
+            marker_dir = os.path.join(game_dir, ".DepotDownloader")
+            os.makedirs(marker_dir, exist_ok=True)
+            marker_path = os.path.join(marker_dir, "partial.json")
+            with open(marker_path, "w", encoding="utf-8") as marker_file:
+                json.dump(
+                    {
+                        "appid": appid,
+                        "failed_depots": self.failed_depots,
+                        "skipped_depots": self.skipped_depots,
+                        "reason": self.last_error_reason,
+                        "timestamp": int(time.time()),
+                    },
+                    marker_file,
+                    indent=2,
+                )
+            logger.info("Marked partial download at %s", marker_path)
+        except OSError as exc:
+            logger.warning("Failed to mark partial download: %s", exc)
 
     def _read_process_output(self):
         """Reads process output byte-by-byte to handle \r updates."""
@@ -270,11 +488,18 @@ class DownloadDepotsTask(QObject):
         if not line:
             return
 
-        # Add to buffer
-        self._log_buffer.append(line)
+        line_lower = line.lower()
+        if any(pattern in line_lower for pattern in ENCRYPTED_CONTENT_PATTERNS):
+            self.encrypted_content_detected = True
+            self._current_depot_encrypted = True
+            self.last_error_reason = (
+                "encrypted_content_or_unsupported_depot"
+                + (f": depot {self._current_depot_id}" if self._current_depot_id else "")
+            )
 
         # Check for percentage update
         match = self.percentage_regex.search(line)
+        emitted_percentage = None
         if match:
             try:
                 percentage = float(match.group(1))
@@ -298,21 +523,63 @@ class DownloadDepotsTask(QObject):
                     if total_percentage != self.last_percentage:
                         self.progress_percentage.emit(total_percentage)
                         self.last_percentage = total_percentage
+                    emitted_percentage = total_percentage
                 else:
                     int_percentage = int(percentage)
                     if int_percentage != self.last_percentage:
                         self.progress_percentage.emit(int_percentage)
                         self.last_percentage = int_percentage
+                    emitted_percentage = int_percentage
             except ValueError:
                 pass
 
+        if self._is_noisy_file_transfer_line(line):
+            if emitted_percentage is not None:
+                self._emit_throttled_status(emitted_percentage)
+            return
+
+        self._log_buffer.append(line)
+
         # Check if we should flush the buffer
-        is_important = "error" in line.lower() or "warning" in line.lower()
+        is_important = (
+            "error" in line_lower
+            or "warning" in line_lower
+            or "failed" in line_lower
+            or "downloaded" in line_lower
+            or "total downloaded" in line_lower
+            or "disconnected" in line_lower
+        )
         current_time = time.time()
 
-        # Flush if important message or time interval passed (80ms)
-        if is_important or (current_time - self._last_log_time > 0.08):
+        # Flush if important message or time interval passed.
+        if is_important or (current_time - self._last_log_time > 0.5):
             self._flush_log_buffer()
+
+    def _is_noisy_file_transfer_line(self, line: str) -> bool:
+        return bool(
+            self._download_file_line_regex.match(line)
+            or self._prealloc_line_regex.match(line)
+        )
+
+    def _emit_throttled_status(self, percentage: int) -> None:
+        current_time = time.time()
+        if (
+            percentage == self._last_status_percentage
+            and (current_time - self._last_status_emit_time) < 2.0
+        ):
+            return
+
+        if (
+            percentage != 100
+            and percentage != self._last_status_percentage
+            and abs(percentage - self._last_status_percentage) < 5
+            and (current_time - self._last_status_emit_time) < 2.0
+        ):
+            return
+
+        self.progress.emit(f"Baixando arquivos... {percentage}%")
+        self._last_status_percentage = percentage
+        self._last_status_emit_time = current_time
 
     def _prepare_downloads(
         self, game_data: Dict[str, Any], selected_depots: List[str], dest_path: str

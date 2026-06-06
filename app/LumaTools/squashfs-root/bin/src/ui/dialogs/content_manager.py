@@ -516,6 +516,13 @@ class ContentManagerDialog(QDialog):
         def worker():
             try:
                 preview, source = self._find_package_for_game(appid)
+                cached_preview = self.content_manager.cached_dlc_preview(
+                    appid=appid,
+                    game_name=name,
+                )
+                if cached_preview and cached_preview.dlcs:
+                    self.dlc_catalog_ready.emit(cached_preview, "dlc_cache", {})
+                    return
                 if preview and preview.dlcs:
                     catalog = self.content_manager.build_dlc_preview(
                         appid=appid,
@@ -524,6 +531,7 @@ class ContentManagerDialog(QDialog):
                         source="Ryuu/ZIP" if source == "ryuu" else "ZIP",
                         filename=preview.filename,
                         zip_path=preview.zip_path,
+                        dlc_statuses=preview.dlc_statuses,
                     )
                     self.dlc_catalog_ready.emit(catalog, catalog.source, {})
                     return
@@ -552,6 +560,7 @@ class ContentManagerDialog(QDialog):
                         source="+".join(source_parts) if source_parts else "steam_store",
                         filename=preview.filename if preview else "Steam DLC catalog",
                         zip_path=preview.zip_path if preview else "",
+                        dlc_statuses=preview.dlc_statuses if preview else [],
                     )
                     self.dlc_catalog_ready.emit(catalog, catalog.source, merged_names)
                     return
@@ -581,7 +590,7 @@ class ContentManagerDialog(QDialog):
             if path.is_file():
                 candidates.append((path, "content_zip"))
             elif path.is_dir():
-                for zip_path in sorted(path.glob("*.zip"), reverse=True):
+                for zip_path in sorted(path.rglob("*.zip"), reverse=True):
                     candidates.append((zip_path, "ryuu"))
 
         for path, source in candidates:
@@ -635,15 +644,36 @@ class ContentManagerDialog(QDialog):
             self._clear_dlc_list("Pacote encontrado, mas nenhuma DLC/App adicional foi detectada.")
             return
 
+        statuses = {
+            str(item.get("appid")): item
+            for item in preview.dlc_statuses
+            if isinstance(item, dict)
+        }
         self.dlc_checked = set(str(dlc_id) for dlc_id in preview.dlcs)
         for dlc_id in preview.dlcs:
+            dlc_text = str(dlc_id)
+            status = statuses.get(dlc_text, {})
+            state = str(status.get("status") or "metadata_only")
+            reason = str(status.get("reason") or status.get("failed_reason") or "")
             item = QListWidgetItem()
-            card = DlcCard(str(dlc_id), f"DLC {dlc_id}", self.accent_color, checked=True)
-            item.setData(Qt.ItemDataRole.UserRole, str(dlc_id))
+            card = DlcCard(dlc_text, f"DLC {dlc_id}", self.accent_color, checked=True)
+            card.setToolTip(
+                "\n".join(
+                    part
+                    for part in [
+                        f"Status: {state}",
+                        f"Motivo: {reason}" if reason else "",
+                    ]
+                    if part
+                )
+            )
+            if state:
+                card.title_label.setText(f"DLC {dlc_id} [{state}]")
+            item.setData(Qt.ItemDataRole.UserRole, dlc_text)
             item.setSizeHint(QSize(500, 76))
             self.dlc_list.addItem(item)
             self.dlc_list.setItemWidget(item, card)
-            self.dlc_cards[str(dlc_id)] = card
+            self.dlc_cards[dlc_text] = card
             self._load_image_into_label(
                 card.image_label,
                 ImageFetcher.get_capsule_image_url(dlc_id),
@@ -678,10 +708,18 @@ class ContentManagerDialog(QDialog):
         threading.Thread(target=worker, daemon=True).start()
 
     def _apply_dlc_names(self, names: dict[str, str]) -> None:
+        statuses = {}
+        if self.current_dlc_preview:
+            statuses = {
+                str(item.get("appid")): str(item.get("status") or "")
+                for item in self.current_dlc_preview.dlc_statuses
+                if isinstance(item, dict)
+            }
         for appid, name in names.items():
             card = self.dlc_cards.get(str(appid))
             if card:
-                card.set_name(name)
+                status = statuses.get(str(appid), "")
+                card.set_name(f"{name} [{status}]" if status else name)
 
     def _toggle_dlc_item(self, item: QListWidgetItem) -> None:
         dlc_id = item.data(Qt.ItemDataRole.UserRole)
@@ -713,7 +751,7 @@ class ContentManagerDialog(QDialog):
             return
 
         appid = str(game.get("appid"))
-        output_dir = get_base_path() / "ryuu_content" / appid
+        output_dir = get_base_path() / "ryuu_content"
         self._set_dlc_buttons_enabled(False)
         self.hero_status.setText("Ryuu: baixando pacote DLC...")
 
@@ -721,6 +759,11 @@ class ContentManagerDialog(QDialog):
             try:
                 fix_path = RyuuClient().download(appid, output_dir, branch="public")
                 preview = self.content_manager.preview_zip(fix_path)
+                prefetch = self.content_manager.prefetch_package(
+                    fix_path,
+                    source="ryuu",
+                    game_dir=game.get("install_path"),
+                )
                 self.content_manager.register_package(preview, source="ryuu", status="ready")
                 if not preview.dlcs:
                     self.operation_done.emit(
@@ -729,7 +772,17 @@ class ContentManagerDialog(QDialog):
                     self.dlc_preview_ready.emit(None, "ryuu")
                     return
                 self.dlc_catalog_ready.emit(preview, "ryuu", {})
-                self.operation_done.emit("DLC Ryuu carregada. Selecione e ative.")
+                cached = sum(
+                    item.get("status") == "cached_installable"
+                    for item in prefetch.get("dlcs", [])
+                )
+                metadata = sum(
+                    item.get("status") == "metadata_only"
+                    for item in prefetch.get("dlcs", [])
+                )
+                self.operation_done.emit(
+                    f"Ryuu analisado: {cached} pronta(s), {metadata} metadata_only."
+                )
             except (RyuuClientError, Exception) as exc:
                 self.operation_failed.emit(f"Nao consegui buscar DLC no Ryuu: {exc}")
             finally:
@@ -774,15 +827,30 @@ class ContentManagerDialog(QDialog):
             self._show_error(f"Nao consegui ativar as DLCs: {exc}")
             return
 
+        installed = int(info.get("installed", 0))
+        metadata_only = int(info.get("metadata_only", 0))
+        locked = int(info.get("locked", 0))
+        failed = int(info.get("failed", 0))
         self.hero_status.setText(
-            f"{len(selected)} DLC(s) ativada(s). Reinicie a Steam para aplicar."
+            f"Instaladas: {installed} | Metadata: {metadata_only} | "
+            f"Bloqueadas: {locked} | Falhas: {failed}"
         )
+        if not installed:
+            QMessageBox.information(
+                self,
+                "Conteudo DLC verificado",
+                (
+                    "Nenhuma DLC com arquivos reais e manifest valido foi instalada.\n"
+                    "Itens sem conteudo permanecem como metadata_only."
+                ),
+            )
+            return
         reply = QMessageBox.question(
             self,
-            "DLC ativada",
+            "DLC instalada",
             (
-                f"{len(selected)} DLC(s) foram ativadas para {info.get('game_name')}.\n\n"
-                "Nenhum arquivo do jogo foi sobrescrito.\n"
+                f"{installed} DLC(s) foram instaladas e verificadas para "
+                f"{info.get('game_name')}.\n\n"
                 "Deseja reiniciar a Steam agora para aplicar?"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
