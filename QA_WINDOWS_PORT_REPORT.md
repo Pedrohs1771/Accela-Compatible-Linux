@@ -4,7 +4,7 @@ Date: 2026-06-06
 
 Branch: `release/windows-v1.1.0-rc`
 
-Conclusion: `APPROVED_RC_BY_LOCAL_TESTS_PENDING_WINDOWS_CI`
+Conclusion: `APPROVED_RC_BY_CI_PENDING_REAL_WINDOWS_10_11_MANUAL_TEST`
 
 ## Environment
 
@@ -28,9 +28,15 @@ Conclusion: `APPROVED_RC_BY_LOCAL_TESTS_PENDING_WINDOWS_CI`
 
 ## CI Requirement
 
-The artifact must be built by `.github/workflows/windows-rc.yml` on
-`windows-latest`. Without that CI artifact and smoke test, this remains an RC,
-not a final Windows release.
+The artifact was built by `.github/workflows/windows-rc.yml` on
+`windows-latest`/Windows 2025. This is approved as an RC by CI, not a final
+Windows release. Final release still requires at least one real Windows 10/11
+machine test with Steam installed.
+
+- CI run: https://github.com/Pedrohs1771/Luma-Tools/actions/runs/27069351812
+- Head SHA: `403e599e8af4c942ce83fb260c755f5590e524ab`
+- Artifact: `LumaTools-Windows-v1.1.0-rc`
+- Artifact size: 486,548,693 bytes
 
 ## Status
 
@@ -46,10 +52,13 @@ not a final Windows release.
 - Windows source-package dry run: `PASS`.
   - Command: `PYTHONPATH=app/LumaTools/squashfs-root/bin/src python tools/build_windows.py --skip-pyinstaller`
   - Output: `dist/LumaTools-Windows-v1.1.0-rc.zip`
-- Windows PyInstaller artifact: `PENDING_GITHUB_ACTIONS`.
-  - Required workflow: `.github/workflows/windows-rc.yml`
+- Windows PyInstaller artifact: `PASS`.
+  - Workflow: `.github/workflows/windows-rc.yml`
+  - Build job: `windows-build`
+  - Smoke: `LumaDoctor.exe --self-test`
+  - Uploaded artifact: `LumaTools-Windows-v1.1.0-rc`
 
 ## Recommendation
 
-Publish as RC only after GitHub Actions passes and uploads
-`LumaTools-Windows-v1.1.0-rc.zip`.
+Publish as RC. Do not publish as final until the artifact is tested on a real
+Windows 10/11 machine with Steam installed.
