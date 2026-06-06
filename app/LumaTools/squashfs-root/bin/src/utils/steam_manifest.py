@@ -3,6 +3,7 @@ import re
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 
@@ -11,6 +12,20 @@ _EMPTY_PLATFORM_CONFIG = '\t"UserConfig"\n\t{\n\t}\n\t"MountedConfig"\n\t{\n\t}'
 
 def sanitize_game_name(game_name: str) -> str:
     return re.sub(r"[^\w\s-]", "", game_name or "").strip().replace(" ", "_")
+
+
+def escape_vdf_string(value: Any) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+    )
+
+
+def _looks_like_appmanifest(content: str) -> bool:
+    return '"AppState"' in content and content.count("{") == content.count("}")
 
 
 def get_install_folder_name(game_data: Dict[str, Any]) -> str:
@@ -129,11 +144,11 @@ def build_acf_content(
     acf_content = (
         f'"AppState"\n'
         f"{{\n"
-        f'\t"appid"\t\t"{game_data["appid"]}"\n'
+        f'\t"appid"\t\t"{escape_vdf_string(game_data["appid"])}"\n'
         f'\t"Universe"\t\t"1"\n'
-        f'\t"name"\t\t"{game_data["game_name"]}"\n'
+        f'\t"name"\t\t"{escape_vdf_string(game_data["game_name"])}"\n'
         f'\t"StateFlags"\t\t"4"\n'
-        f'\t"installdir"\t\t"{install_folder_name}"\n'
+        f'\t"installdir"\t\t"{escape_vdf_string(install_folder_name)}"\n'
         f'\t"LastUpdated"\t\t"{int(time.time())}"\n'
         f'\t"LastOwner"\t\t"0"\n'
         f'\t"SizeOnDisk"\t\t"{size_on_disk}"\n'
@@ -185,8 +200,30 @@ def write_acf_file(
         logger=logger,
     )
 
-    with open(acf_path, "w", encoding="utf-8") as f:
-        f.write(acf_content)
+    backup_path = None
+    if os.path.exists(acf_path):
+        backup_path = f"{acf_path}.bak"
+        shutil.copy2(acf_path, backup_path)
+
+    tmp_path = f"{acf_path}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(acf_content)
+
+        written = Path(tmp_path).read_text(encoding="utf-8", errors="ignore")
+        if not _looks_like_appmanifest(written):
+            raise ValueError("Generated appmanifest failed validation")
+
+        os.replace(tmp_path, acf_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            if backup_path and os.path.exists(backup_path):
+                shutil.copy2(backup_path, acf_path)
+        finally:
+            pass
+        raise
 
     return acf_path
 
