@@ -45,8 +45,8 @@ class WorkshopBackendTests(unittest.TestCase):
         profile = resolve_workshop_profile(self.game)
         self.assertEqual(profile.engine, "bepinex")
         self.assertEqual(
-            Path(profile.target_root),
-            self.game / "BepInEx" / "plugins",
+            Path(profile.target_root).resolve(),
+            (self.game / "BepInEx" / "plugins").resolve(),
         )
 
     def test_install_enable_disable_repair_and_uninstall(self) -> None:

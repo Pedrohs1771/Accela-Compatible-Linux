@@ -16,7 +16,10 @@ class RyuuClientLocalSecretsTests(unittest.TestCase):
                 ryuu_client.save_ryuu_auth_key("abcd12345678wxyz")
                 path = ryuu_client.secrets_path()
 
-                self.assertEqual(path, Path(tmp) / "LumaTools" / "secrets.json")
+                self.assertEqual(
+                    path.resolve(),
+                    (Path(tmp) / "LumaTools" / "secrets.json").resolve(),
+                )
                 self.assertEqual(ryuu_client.load_ryuu_auth_key(), "abcd12345678wxyz")
                 self.assertEqual(ryuu_client.mask_key("abcd12345678wxyz"), "abcd********wxyz")
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
