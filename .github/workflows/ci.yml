@@ -13,7 +13,22 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            desktop-file-utils \
+            libdbus-1-3 \
+            libegl1 \
+            libfontconfig1 \
+            libgl1 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0
       - name: Install Python deps
         run: |
           python -m venv .qa-venv
@@ -22,7 +37,11 @@ jobs:
       - name: QA quick
         env:
           QT_QPA_PLATFORM: offscreen
-        run: .qa-venv/bin/python tools/qa_all.py --quick
+        run: |
+          .qa-venv/bin/python tools/qa_all.py --quick || {
+            cat QA_REPORT.md
+            exit 1
+          }
 
   test-windows:
     runs-on: windows-latest

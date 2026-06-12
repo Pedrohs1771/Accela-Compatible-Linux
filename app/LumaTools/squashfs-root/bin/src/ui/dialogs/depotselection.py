@@ -277,6 +277,8 @@ class DepotSelectionDialog(QDialog):
 
         self.proton_checkbox.setEnabled(enabled)
         self.proton_combo.setEnabled(enabled and self.proton_checkbox.isChecked())
+        if hasattr(self, "proton_container"):
+            self.proton_container.setVisible(show_windows_controls)
         self.proton_checkbox.setVisible(show_windows_controls)
         self.proton_combo.setVisible(show_windows_controls)
         if hasattr(self, "proton_tool_label"):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest import mock
 
@@ -22,6 +23,7 @@ class _Settings:
         self.synced = True
 
 
+@unittest.skipUnless(sys.platform == "linux", "Steam library destination test uses Linux paths")
 class SteamLibraryDestinationTests(unittest.TestCase):
     def test_multiple_libraries_open_selector_instead_of_forcing_primary(self):
         manager = TaskManager.__new__(TaskManager)

@@ -1,4 +1,5 @@
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 
@@ -129,6 +130,7 @@ class SteamManifestRepairTests(unittest.TestCase):
                 detect_recent_decryption_key_issue(library, "888"),
             )
 
+    @unittest.skipUnless(sys.platform == "linux", "Proton platform override is Linux-only")
     def test_onlinefix_windows_game_gets_proton_platform_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             library = Path(tmp)

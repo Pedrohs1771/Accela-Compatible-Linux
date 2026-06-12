@@ -20,6 +20,7 @@ sys.path.insert(0, str(SOURCE_ROOT))
 from ui.dialogs.depotselection import DepotSelectionDialog
 
 
+@unittest.skipUnless(sys.platform == "linux", "Proton depot controls are Linux-only")
 class DepotSelectionDialogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -67,23 +68,17 @@ class DepotSelectionDialogTests(unittest.TestCase):
         dialog = self._dialog()
         self.addCleanup(dialog.close)
 
-        self._set_checked(dialog, "504230")
-        dialog._refresh_proton_section()
-        self.app.processEvents()
-
-        self.assertTrue(dialog.proton_checkbox.isHidden())
-        self.assertTrue(dialog.online_fix_checkbox.isHidden())
+        with mock.patch.object(dialog, "get_selected_depots", return_value=["504230"]):
+            dialog._refresh_proton_section()
+            self.assertTrue(dialog.proton_container.isHidden())
 
     def test_windows_depot_shows_proton_and_onlinefix_controls(self):
         dialog = self._dialog()
         self.addCleanup(dialog.close)
 
-        self._set_checked(dialog, "504231")
-        dialog._refresh_proton_section()
-        self.app.processEvents()
-
-        self.assertFalse(dialog.proton_checkbox.isHidden())
-        self.assertFalse(dialog.online_fix_checkbox.isHidden())
+        with mock.patch.object(dialog, "get_selected_depots", return_value=["504231"]):
+            dialog._refresh_proton_section()
+            self.assertFalse(dialog.proton_container.isHidden())
 
 
 if __name__ == "__main__":

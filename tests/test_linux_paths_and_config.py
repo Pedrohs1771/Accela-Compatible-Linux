@@ -267,6 +267,7 @@ class LinuxBackendLibraryTests(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(sys.platform == "linux", "SLSsteam path tests are Linux-only")
 class SLSsteamConfigPathTests(unittest.TestCase):
     def test_flatpak_config_path_is_returned_even_when_missing(self):
         _ensure_qsettings_stub()
