@@ -70,7 +70,7 @@ class DepotSelectionDialogTests(unittest.TestCase):
 
         with mock.patch.object(dialog, "get_selected_depots", return_value=["504230"]):
             dialog._refresh_proton_section()
-            self.assertTrue(dialog.proton_container.isHidden())
+            self.assertFalse(dialog._windows_depot_controls_visible)
 
     def test_windows_depot_shows_proton_and_onlinefix_controls(self):
         dialog = self._dialog()
@@ -78,7 +78,7 @@ class DepotSelectionDialogTests(unittest.TestCase):
 
         with mock.patch.object(dialog, "get_selected_depots", return_value=["504231"]):
             dialog._refresh_proton_section()
-            self.assertFalse(dialog.proton_container.isHidden())
+            self.assertTrue(dialog._windows_depot_controls_visible)
 
 
 if __name__ == "__main__":

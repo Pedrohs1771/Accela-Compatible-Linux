@@ -256,7 +256,7 @@ class DepotSelectionDialog(QDialog):
         parent_layout.addWidget(container)
 
     def _refresh_proton_section(self):
-        if not self.proton_checkbox or not self.proton_combo:
+        if self.proton_checkbox is None or self.proton_combo is None:
             return
 
         selected_depots = self.get_selected_depots()
@@ -265,6 +265,7 @@ class DepotSelectionDialog(QDialog):
         proton_available = bool(self._proton_tools)
         enabled = requires_proton and proton_available
         show_windows_controls = has_windows_selection
+        self._windows_depot_controls_visible = show_windows_controls
 
         self.proton_checkbox.blockSignals(True)
         try:
@@ -278,7 +279,7 @@ class DepotSelectionDialog(QDialog):
         self.proton_checkbox.setEnabled(enabled)
         self.proton_combo.setEnabled(enabled and self.proton_checkbox.isChecked())
         if hasattr(self, "proton_container"):
-            self.proton_container.setVisible(show_windows_controls)
+            self.proton_container.setHidden(not show_windows_controls)
         self.proton_checkbox.setVisible(show_windows_controls)
         self.proton_combo.setVisible(show_windows_controls)
         if hasattr(self, "proton_tool_label"):
