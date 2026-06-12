@@ -11,6 +11,8 @@ from utils.steam_manifest import get_game_directory
 
 logger = logging.getLogger("LumaTools.OnlineFixInjector")
 
+DEFAULT_ONLINE_FIX_LANGUAGE = "brazilian"
+
 class OnlineFixInjector:
     @staticmethod
     def _safe_target(base_dir: str, relative_path: str) -> str:
@@ -190,7 +192,126 @@ class OnlineFixInjector:
             return False
 
     @staticmethod
-    def inject_fix(game_dir: str, fix_path: str, target_executable: Optional[str] = None, config_modifications: Optional[List[Tuple[str, str, str]]] = None) -> Tuple[bool, List[str], str, Optional[str]]:
+    def _normalize_onlinefix_language(
+        game_dir: str,
+        language: str = DEFAULT_ONLINE_FIX_LANGUAGE,
+    ) -> List[str]:
+        updated_files = []
+        language_pattern = re.compile(
+            r"^([ \t]*Language[ \t]*=[ \t]*)([^\r\n]*)",
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        main_pattern = re.compile(
+            r"^[ \t]*\[Main\][ \t]*(?:\r\n|\n|\r|$)",
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+
+        for root, _, files in os.walk(game_dir):
+            for filename in files:
+                if filename.lower() != "onlinefix.ini":
+                    continue
+
+                ini_path = os.path.join(root, filename)
+                try:
+                    with open(
+                        ini_path,
+                        "r",
+                        encoding="utf-8-sig",
+                        errors="ignore",
+                        newline="",
+                    ) as handle:
+                        content = handle.read()
+
+                    updated, replacements = language_pattern.subn(
+                        lambda match: f"{match.group(1)}{language}",
+                        content,
+                        count=1,
+                    )
+                    if not replacements:
+                        main_match = main_pattern.search(content)
+                        newline = "\r\n" if "\r\n" in content else "\n"
+                        if main_match:
+                            updated = (
+                                content[:main_match.end()]
+                                + f"Language={language}{newline}"
+                                + content[main_match.end():]
+                            )
+                        else:
+                            updated = (
+                                f"[Main]{newline}Language={language}{newline}{newline}"
+                                + content
+                            )
+
+                    if updated != content:
+                        with open(
+                            ini_path,
+                            "w",
+                            encoding="utf-8",
+                            newline="",
+                        ) as handle:
+                            handle.write(updated)
+                        updated_files.append(ini_path)
+                except OSError as exc:
+                    logger.warning(
+                        "Não foi possível definir o idioma do Online-Fix em %s: %s",
+                        ini_path,
+                        exc,
+                    )
+
+        return updated_files
+
+    @staticmethod
+    def _pe_arch(path: Optional[str]) -> str:
+        if not path:
+            return ""
+        try:
+            with open(path, "rb") as f:
+                if f.read(2) != b"MZ":
+                    return ""
+                f.seek(0x3C)
+                pe_offset = int.from_bytes(f.read(4), "little")
+                f.seek(pe_offset)
+                if f.read(4) != b"PE\x00\x00":
+                    return ""
+                machine = int.from_bytes(f.read(2), "little")
+        except OSError:
+            return ""
+        if machine == 0x014C:
+            return "x86"
+        if machine == 0x8664:
+            return "x64"
+        return ""
+
+    @staticmethod
+    def _normalize_dlllist(game_dir: str, skip_names: Optional[set] = None) -> List[str]:
+        dlllist_path = os.path.join(game_dir, "dlllist.txt")
+        if not os.path.isfile(dlllist_path):
+            return []
+
+        skip_names = skip_names or set()
+        entries = []
+        seen = set()
+        try:
+            with open(dlllist_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f.read().splitlines():
+                    filename = os.path.basename(line.strip())
+                    if not filename:
+                        continue
+                    name = os.path.splitext(filename)[0].lower()
+                    if name in skip_names or name in seen:
+                        continue
+                    seen.add(name)
+                    entries.append(filename)
+
+            with open(dlllist_path, "w", encoding="utf-8", newline="") as f:
+                f.write("\r\n".join(entries))
+        except OSError:
+            return []
+
+        return [os.path.splitext(entry)[0].lower() for entry in entries]
+
+    @staticmethod
+    def inject_fix(game_dir: str, fix_path: str, target_executable: Optional[str] = None, config_modifications: Optional[List[Tuple[str, str, str, str]]] = None) -> Tuple[bool, List[str], str, Optional[str]]:
         if not os.path.exists(game_dir) or not os.path.exists(fix_path):
             return False, [], "", None
 
@@ -201,6 +322,12 @@ class OnlineFixInjector:
                 logger.error(extractor_info)
                 return False, [], extractor_info, None
             logger.info("Online-Fix extraído com: %s", extractor_info)
+            localized_files = OnlineFixInjector._normalize_onlinefix_language(game_dir)
+            if localized_files:
+                logger.info(
+                    "Online-Fix configurado para PT-BR em %s arquivo(s).",
+                    len(localized_files),
+                )
             
             # Identificar o executável original (antes de qualquer injeção)
             # Para isso, olhamos o que já existia ou o maior .exe que não seja um loader conhecido
@@ -223,18 +350,53 @@ class OnlineFixInjector:
                     if os.path.exists(config_file_path):
                         OnlineFixInjector._modify_ini_file(config_file_path, section, key, value)
 
-            important_dlls = ["version", "winmm", "winhttp", "steam_api64", "wininet", "uplay_r1_loader64", "onlinefix64", "onlinefix", "steamoverlay64"]
+            def add_override(name: str) -> None:
+                name = (name or "").strip().lower()
+                if name and name not in found_overrides:
+                    found_overrides.append(name)
+
+            main_arch = OnlineFixInjector._pe_arch(actual_main_executable_path)
+
+            def should_skip_override(name: str) -> bool:
+                return main_arch == "x86" and name == "steamoverlay32"
+
+            skip_dlllist_names = {"steamoverlay32"} if main_arch == "x86" else set()
+            for dll in OnlineFixInjector._normalize_dlllist(game_dir, skip_dlllist_names):
+                add_override(dll)
+
+            important_dlls = [
+                "version",
+                "winmm",
+                "winhttp",
+                "steam_api",
+                "steam_api64",
+                "wininet",
+                "uplay_r1_loader64",
+                "onlinefix",
+                "onlinefix64",
+                "steamoverlay32",
+                "steamoverlay64",
+            ]
             for root, _, files in os.walk(game_dir):
                 for file in files:
                     name, ext = os.path.splitext(file.lower())
                     if ext == ".dll" and (name in important_dlls or "onlinefix" in name):
-                        if name not in found_overrides:
-                            found_overrides.append(name)
+                        if main_arch == "x86" and name.endswith("64"):
+                            continue
+                        if main_arch == "x64" and name.endswith("32"):
+                            continue
+                        if should_skip_override(name):
+                            continue
+                        add_override(name)
             
-            required_overrides = ["onlinefix64", "steamoverlay64", "winmm", "steam_api64", "winhttp"]
+            if main_arch == "x86":
+                required_overrides = ["onlinefix", "winmm", "steam_api", "winhttp"]
+            elif main_arch == "x64":
+                required_overrides = ["onlinefix64", "steamoverlay64", "winmm", "steam_api64", "winhttp"]
+            else:
+                required_overrides = ["onlinefix", "onlinefix64", "winmm", "steam_api", "steam_api64", "winhttp"]
             for dll in required_overrides:
-                if dll not in found_overrides:
-                    found_overrides.append(dll)
+                add_override(dll)
 
             # O separador correto para WINEDLLOVERRIDES no Proton é ';' (ponto e vírgula)
             override_str = ";".join([f"{o}=n,b" for o in found_overrides])

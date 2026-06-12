@@ -37,6 +37,7 @@ from managers.discord_presence_manager import DiscordPresenceManager
 from managers.game_manager import GameManager
 from managers.gif_manager import GIFManager
 from managers.job_queue_manager import JobQueueManager
+from managers.steam_bridge_manager import SteamBridgeManager
 from managers.system_integration_manager import SystemIntegrationManager
 from managers.task_manager import TaskManager
 from managers.update_manager import UpdateManager
@@ -131,7 +132,7 @@ class MainWindow(QMainWindow):
 
     def _setup_window_properties(self) -> None:
         self.setObjectName("lumatools")
-        self.setWindowTitle("Luma Tools")
+        self.setWindowTitle("LumaTools")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(800, 600)
         self.setAcceptDrops(True)
@@ -149,6 +150,7 @@ class MainWindow(QMainWindow):
         self.cloud_save_manager = CloudSaveManager(self)
         self.discord_presence_manager = DiscordPresenceManager(self)
         self.update_manager = UpdateManager(self)
+        self.steam_bridge_manager = SteamBridgeManager(self)
         self.manifest_downloader = ManifestDownloader()
         self.workshop_manager = WorkshopManager()
         self.game_manager.scan_steam_libraries_async()
@@ -213,15 +215,26 @@ class MainWindow(QMainWindow):
             self.tray_icon = None
             return
         self.tray_icon = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray_icon.setToolTip("LumaTools")
         self.tray_menu = QMenu()
-        self.tray_menu.addAction("Mostrar Luma Tools", self.show_from_tray)
+        self.tray_menu.addAction("Mostrar LumaTools", self.show_from_tray)
+        self.tray_menu.addSeparator()
+        self.tray_menu.addAction("Biblioteca", self.open_game_library_from_tray)
+        self.tray_menu.addAction("Baixar jogo / manifesto", self.open_fetch_dialog_from_tray)
+        self.tray_menu.addAction("Status", self.open_status_dialog_from_tray)
+        self.tray_menu.addSeparator()
+        self.tray_menu.addAction("Configurações", self.open_settings_from_tray)
+        self.tray_menu.addAction("Central de updates", self.open_update_center_from_tray)
+        self.tray_menu.addSeparator()
         self.tray_menu.addAction("Sair", lambda: self.request_quit("tray"))
         self.tray_icon.setContextMenu(self.tray_menu)
+        self.tray_icon.activated.connect(self._handle_tray_activation)
         self.tray_icon.show()
 
     def _setup_runtime_integrations(self) -> None:
         if self.system_integration: self.system_integration.steam_closed.connect(self._handle_steam_closed)
         if self.update_manager: self.update_manager.update_available_changed.connect(self._handle_update_available_changed)
+        if self.steam_bridge_manager: self.steam_bridge_manager.start()
 
     def _setup_resize_handles(self) -> None:
         for edge in ["right", "bottom"]:
@@ -250,6 +263,25 @@ class MainWindow(QMainWindow):
     def open_update_center(self): UpdateCenterDialog(self).exec()
     def open_credits_dialog(self): CreditsDialog(self).exec()
     def open_lain_minigame(self): LainMinigameDialog(self).exec()
+
+    def _open_from_tray(self, opener) -> None:
+        self.show_from_tray()
+        QTimer.singleShot(0, opener)
+
+    def open_settings_from_tray(self) -> None:
+        self._open_from_tray(self.open_settings)
+
+    def open_game_library_from_tray(self) -> None:
+        self._open_from_tray(self.open_game_library)
+
+    def open_fetch_dialog_from_tray(self) -> None:
+        self._open_from_tray(self.open_fetch_dialog)
+
+    def open_status_dialog_from_tray(self) -> None:
+        self._open_from_tray(self.open_status_dialog)
+
+    def open_update_center_from_tray(self) -> None:
+        self._open_from_tray(self.open_update_center)
 
     def dragEnterEvent(self, event):
         if not event.mimeData().hasUrls():
@@ -290,6 +322,13 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.activateWindow()
 
+    def _handle_tray_activation(self, reason):
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self.show_from_tray()
+
     def hide_to_tray(self, show_message=True):
         if self.tray_icon is None or not self.tray_icon.isVisible():
             self.showMinimized()
@@ -316,6 +355,7 @@ class MainWindow(QMainWindow):
             "update_manager",
             "cloud_save_manager",
             "system_integration",
+            "steam_bridge_manager",
             "discord_presence_manager",
             "audio_manager",
             "task_manager",

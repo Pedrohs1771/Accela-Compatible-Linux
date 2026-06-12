@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DOWNLOADS = 8
 MAX_SAFE_DOWNLOADS = 32
 
+ENCRYPTED_CONTENT_PATTERNS = (
+    "content still encrypted",
+    "still encrypted",
+    "missing decryption key",
+    "unable to get depot decryption key",
+    "no decryption key",
+    "depot encrypted",
+)
+
 
 class DownloadDepotsTask(QObject):
     """
@@ -38,7 +47,7 @@ class DownloadDepotsTask(QObject):
     progress = pyqtSignal(str)
     progress_percentage = pyqtSignal(int)
     completed = pyqtSignal()
-    error = pyqtSignal()
+    error = pyqtSignal(tuple)
 
     def __init__(self):
         super().__init__()
@@ -52,6 +61,13 @@ class DownloadDepotsTask(QObject):
         self.current_depot_size = 0
         self._last_log_time = 0
         self._log_buffer = []
+        self.commands_started = 0
+        self.failed_depots: List[Dict[str, Any]] = []
+        self.skipped_depots: List[str] = []
+        self.last_error_reason = ""
+        self.encrypted_content_detected = False
+        self._current_depot_encrypted = False
+        self._current_depot_id = ""
 
     @property
     def is_running_flag(self) -> bool:
@@ -66,6 +82,11 @@ class DownloadDepotsTask(QObject):
         """
         logger.info(f"Download task starting for {len(selected_depots)} depots.")
         current_cmd: Optional[List[str]] = None
+        self.commands_started = 0
+        self.failed_depots = []
+        self.skipped_depots = []
+        self.last_error_reason = ""
+        self.encrypted_content_detected = False
 
         try:
             # Check for .NET 9 availability before proceeding (will attempt auto-install if missing)
@@ -81,13 +102,10 @@ class DownloadDepotsTask(QObject):
             commands, skipped_depots, depot_sizes = self._prepare_downloads(
                 game_data, selected_depots, dest_path
             )
+            self.skipped_depots = list(skipped_depots)
 
             if not commands:
-                self.progress.emit(
-                    "No valid download commands to execute. Task finished."
-                )
-                self.completed.emit()
-                return
+                raise RuntimeError("No valid download commands to execute.")
 
             total_depots = len(commands)
             self.total_download_size_for_this_job = sum(depot_sizes)
@@ -105,6 +123,8 @@ class DownloadDepotsTask(QObject):
                 depot_id = current_cmd[
                     5
                 ]  # 'dotnet', 'dll', '-app', 'id', '-depot', 'id'
+                self._current_depot_id = str(depot_id)
+                self._current_depot_encrypted = False
                 self.current_depot_size = depot_sizes[i]
 
                 self.progress.emit(
@@ -126,6 +146,7 @@ class DownloadDepotsTask(QObject):
                     text=False,  # Binary mode
                     creationflags=creation_flags,
                 )
+                self.commands_started += 1
 
                 # Read output directly in this thread
                 self._read_process_output()
@@ -145,13 +166,30 @@ class DownloadDepotsTask(QObject):
                     return_code = self.process.poll()
                     self.process = None
 
+                if self._current_depot_encrypted:
+                    self.failed_depots.append(
+                        {
+                            "depot_id": str(depot_id),
+                            "return_code": int(return_code or 1),
+                            "status": "encrypted_content_or_unsupported_depot",
+                        }
+                    )
+                    break
                 if return_code != 0:
                     msg = (
-                        f"Warning: DepotDownloader exited with code "
+                        f"ERROR: DepotDownloader exited with code "
                         f"{return_code} for depot {depot_id}."
                     )
                     self.progress.emit(msg)
-                    logger.warning(msg)
+                    logger.error(msg)
+                    self.failed_depots.append(
+                        {
+                            "depot_id": str(depot_id),
+                            "return_code": int(return_code),
+                            "status": "download_failed",
+                        }
+                    )
+                    break
                 else:
                     self.completed_so_far_for_this_job += self.current_depot_size
 
@@ -160,11 +198,31 @@ class DownloadDepotsTask(QObject):
                     f"Skipped {len(skipped_depots)} depots due to missing manifests: "
                     f"{', '.join(skipped_depots)}"
                 )
+                self.failed_depots.extend(
+                    {
+                        "depot_id": str(depot_id),
+                        "return_code": -1,
+                        "status": "missing_manifest",
+                    }
+                    for depot_id in skipped_depots
+                )
 
             if not self._is_running:
                 logger.info("Download task stopped before cleanup.")
                 self.completed.emit()
                 return
+
+            if self.commands_started <= 0:
+                raise RuntimeError("No depot download command was started.")
+
+            if self.failed_depots:
+                failures = ", ".join(
+                    f"{item['depot_id']}={item['status']}"
+                    for item in self.failed_depots
+                )
+                self.last_error_reason = f"Depot download failed: {failures}"
+                self._cleanup_temp_files()
+                raise RuntimeError(self.last_error_reason)
 
             self._cleanup_temp_files()
             self.completed.emit()
@@ -180,14 +238,14 @@ class DownloadDepotsTask(QObject):
             )
             self.progress.emit(error_msg)
             logger.critical(f"'{binary}' not found.")
-            self.error.emit()
+            self.error.emit((FileNotFoundError, error_msg, None))
             raise
 
         except (OSError, subprocess.SubprocessError) as e:
             self.progress.emit(f"An unexpected error occurred during download: {e}")
             logger.error(f"Download subprocess failed: {e}", exc_info=True)
             self.process = None
-            self.error.emit()
+            self.error.emit((type(e), e, None))
             raise
 
     def _read_process_output(self):
@@ -236,7 +294,6 @@ class DownloadDepotsTask(QObject):
         temp_dir = tempfile.gettempdir()
         items_to_clean = {
             "mistwalker_keys.vdf": os.path.join(temp_dir, "mistwalker_keys.vdf"),
-            "mistwalker_manifests": os.path.join(temp_dir, "mistwalker_manifests"),
         }
 
         for name, path in items_to_clean.items():
@@ -269,6 +326,15 @@ class DownloadDepotsTask(QObject):
         line = line.strip()
         if not line:
             return
+
+        line_lower = line.lower()
+        if any(pattern in line_lower for pattern in ENCRYPTED_CONTENT_PATTERNS):
+            self.encrypted_content_detected = True
+            self._current_depot_encrypted = True
+            self.last_error_reason = (
+                "encrypted_content_or_unsupported_depot"
+                + (f": depot {self._current_depot_id}" if self._current_depot_id else "")
+            )
 
         # Add to buffer
         self._log_buffer.append(line)
@@ -307,7 +373,11 @@ class DownloadDepotsTask(QObject):
                 pass
 
         # Check if we should flush the buffer
-        is_important = "error" in line.lower() or "warning" in line.lower()
+        is_important = (
+            "error" in line_lower
+            or "warning" in line_lower
+            or "failed" in line_lower
+        )
         current_time = time.time()
 
         # Flush if important message or time interval passed (80ms)

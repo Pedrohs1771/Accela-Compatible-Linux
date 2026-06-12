@@ -343,7 +343,7 @@ class CustomGifsDialog(QDialog):
             "disable_default_gifs",
             False,
             self,
-            "Desativa os GIFs padrão de download da Lain",
+            "Desativa os GIFs padrão animados de download",
         )
         layout.addWidget(self.default_gifs_checkbox)
 

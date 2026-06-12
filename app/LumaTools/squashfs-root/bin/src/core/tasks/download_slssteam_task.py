@@ -16,6 +16,7 @@ from core.linux_paths import (
     find_slssteam_paths,
     get_slssteam_install_dir,
     get_slssteam_setup_command,
+    is_slssteam_supported,
     list_steam_roots,
 )
 
@@ -135,6 +136,13 @@ class DownloadSLSsteamTask(QObject):
 
     @classmethod
     def install_latest_blocking(cls) -> str:
+        steam_mode = detect_linux_steam_mode()
+        if sys.platform == "linux" and not is_slssteam_supported(steam_mode):
+            raise RuntimeError(
+                f"SLSsteam não é suportado pelo Steam {steam_mode}. "
+                "A Steam pode ser iniciada normalmente sem essa integração."
+            )
+
         temp_root = Path(tempfile.mkdtemp(prefix="lumatools-slssteam-"))
         archive_path = temp_root / "SLSsteam-Any.7z"
         extract_dir = temp_root / "extract"
@@ -214,6 +222,17 @@ class DownloadSLSsteamTask(QObject):
         return status
 
     def run(self) -> None:
+        steam_mode = detect_linux_steam_mode()
+        if sys.platform == "linux" and not is_slssteam_supported(steam_mode):
+            message = (
+                f"SLSsteam não é suportado pelo Steam {steam_mode}. "
+                "Use Steam nativa ou Flatpak para essa integração."
+            )
+            logger.warning(message)
+            self.progress.emit(message)
+            self.error.emit()
+            return
+
         temp_root = Path(tempfile.mkdtemp(prefix="lumatools-slssteam-"))
         archive_path = temp_root / "SLSsteam-Any.7z"
         extract_dir = temp_root / "extract"

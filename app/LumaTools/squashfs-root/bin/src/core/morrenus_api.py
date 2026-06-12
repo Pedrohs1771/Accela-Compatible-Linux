@@ -198,7 +198,10 @@ def check_health() -> Dict:
     try:
         response = _session.get(url, timeout=5)
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            return {"status": response.text.strip() or "healthy"}
     except Exception as e:
         error_msg = _handle_request_exception(e, "Health check")
         return {"status": "unhealthy", "error": error_msg}

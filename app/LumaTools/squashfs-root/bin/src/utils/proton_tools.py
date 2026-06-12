@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -220,12 +221,21 @@ def choose_default_proton_tool(tools: Optional[Sequence[ProtonTool]] = None) -> 
 def depot_selection_requires_proton(
     selected_depots: Iterable[Any], all_depots: Dict[str, Any]
 ) -> bool:
+    if sys.platform != "linux":
+        return False
+
+    has_windows = False
+    has_linux = False
+
     for depot_id in selected_depots:
         depot_info = all_depots.get(str(depot_id), {})
         platform = str(depot_info.get("oslist") or "").strip().lower()
         if platform == "windows":
-            return True
-    return False
+            has_windows = True
+        elif platform == "linux":
+            has_linux = True
+
+    return has_windows and not has_linux
 
 
 def build_default_proton_selection(

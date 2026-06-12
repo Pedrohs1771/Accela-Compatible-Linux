@@ -12,7 +12,9 @@ from typing import Any, Optional, Tuple
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QFont, QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QComboBox,
     QColorDialog,
     QDialog,
     QFileDialog,
@@ -24,6 +26,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTabWidget,
@@ -33,6 +36,12 @@ from PyQt6.QtWidgets import (
 
 from core import morrenus_api
 from core.ryuu_client import load_ryuu_auth_key, save_ryuu_auth_key
+from core.visual_presets import (
+    DEFAULT_VISUAL_PRESET,
+    all_visual_presets,
+    get_visual_preset,
+    normalize_visual_preset,
+)
 from ui.dialogs.custom_gifs import CustomGifsDialog
 from ui.dialogs.dialog_helpers import create_standard_buttons
 from utils.helpers import (
@@ -200,10 +209,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None, focus_section: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Configurações")
-        self.setMinimumWidth(860)
-        self.setMinimumHeight(720)
-        self.resize(920, 760)
+        self.setWindowTitle("Configurações — LumaTools")
         self.settings = get_settings()
         self.main_window = parent
         self.focus_section = focus_section
@@ -260,6 +266,7 @@ class SettingsDialog(QDialog):
         self.accent_reset_button = None
         self.bg_color_button = None
         self.bg_reset_button = None
+        self.visual_preset_combo = None
         self.titlebar_position_checkbox = None
         self.sonic_mode_checkbox = None
         self.gif_display_checkbox = None
@@ -294,14 +301,37 @@ class SettingsDialog(QDialog):
         )
 
         logger.debug("Opening SettingsDialog.")
+        self._apply_responsive_dialog_size()
         self._setup_ui()
         if self.focus_section == "ryuu":
             QTimer.singleShot(0, self.focus_ryuu_integration)
+
+    def _apply_responsive_dialog_size(self) -> None:
+        """Size settings to the current display without wasting space."""
+        min_width = 700
+        min_height = 520
+        target_width = 1120
+        target_height = 780
+
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            target_width = min(target_width, max(min_width, int(available.width() * 0.90)))
+            target_height = min(
+                target_height, max(min_height, int(available.height() * 0.90))
+            )
+            min_width = min(min_width, max(560, int(available.width() * 0.72)))
+            min_height = min(min_height, max(440, int(available.height() * 0.68)))
+
+        self.setMinimumSize(min_width, min_height)
+        self.resize(target_width, target_height)
 
     def _setup_ui(self) -> None:
         """Initialize the UI layout."""
         self._apply_dialog_readability_style()
         self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(12, 10, 12, 10)
+        self.main_layout.setSpacing(10)
 
         self._create_tab_widget()
         self._setup_tabs()
@@ -318,26 +348,57 @@ class SettingsDialog(QDialog):
         """Create and style the tab widget."""
         self.tab_widget = QTabWidget()
         self.tab_widget.tabBar().setExpanding(False)
+        self.tab_widget.tabBar().setUsesScrollButtons(True)
+        self.tab_widget.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
+        self.tab_widget.setDocumentMode(True)
         bg_color = self.settings.value("background_color", "#1E1E1E")
+        accent = QColor(self.accent_color)
+        accent_soft = f"rgba({accent.red()}, {accent.green()}, {accent.blue()}, 0.25)"
+        accent_faint = f"rgba({accent.red()}, {accent.green()}, {accent.blue()}, 0.10)"
+        muted = QColor(self.accent_color).darker(135).name()
         self.tab_widget.setStyleSheet(
             f"""
             QTabWidget::pane {{
-                border: none;
+                border: 1px solid {accent_soft};
+                border-left: none;
+                border-right: none;
+                border-bottom: none;
+                margin-top: 3px;
             }}
             QTabBar::tab {{
                 background: {bg_color};
-                color: #888888;
-                padding: 10px 16px;
+                color: {muted};
+                padding: 10px 11px;
                 border: none;
                 font-size: 13px;
                 font-weight: 700;
+                min-width: 64px;
             }}
             QTabBar::tab:selected {{
                 color: {self.accent_color};
+                background: {accent_faint};
                 border-bottom: 2px solid {self.accent_color};
             }}
             QTabBar::tab:!selected {{
-                color: #888888;
+                color: {muted};
+            }}
+            QTabBar::tab:hover {{
+                color: {QColor(self.accent_color).lighter(135).name()};
+            }}
+            QTabBar::scroller {{
+                width: 46px;
+            }}
+            QTabBar QToolButton {{
+                background: {bg_color};
+                color: {self.accent_color};
+                border: 1px solid {accent_soft};
+                border-radius: 3px;
+                margin: 4px 2px;
+                width: 20px;
+            }}
+            QTabBar QToolButton:hover {{
+                border-color: {self.accent_color};
+                background: {accent_faint};
             }}
         """
         )
@@ -355,6 +416,15 @@ class SettingsDialog(QDialog):
         self._create_audio_tab()
         self._create_style_tab()
 
+    def _add_settings_tab(self, tab: QWidget, title: str) -> None:
+        """Add a settings tab inside a responsive scroll container."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(tab)
+        self.tab_widget.addTab(scroll, title)
+
     def focus_ryuu_integration(self) -> None:
         if not self.tab_widget or not self.ryuu_api_key_input:
             return
@@ -368,39 +438,151 @@ class SettingsDialog(QDialog):
     def _apply_dialog_readability_style(self) -> None:
         bg_color = self.settings.value("background_color", "#000000")
         accent_color = self.settings.value("accent_color", "#C06C84")
+        bg_q = QColor(bg_color)
+        accent_q = QColor(accent_color)
+        panel = "#090509" if bg_q.lightness() < 14 else bg_q.lighter(110).name()
+        field = "#050405" if bg_q.lightness() < 14 else bg_q.darker(108).name()
+        line = f"rgba({accent_q.red()}, {accent_q.green()}, {accent_q.blue()}, 0.45)"
+        line_soft = f"rgba({accent_q.red()}, {accent_q.green()}, {accent_q.blue()}, 0.22)"
+        line_faint = f"rgba({accent_q.red()}, {accent_q.green()}, {accent_q.blue()}, 0.10)"
+        text_soft = accent_q.lighter(140).name()
+        muted = accent_q.darker(135).name()
         self.setStyleSheet(
             f"""
             QDialog {{
                 background-color: {bg_color};
+                color: {accent_color};
             }}
-            QLabel, QCheckBox, QPushButton, QLineEdit, QSpinBox, QGroupBox {{
+            QLabel, QCheckBox, QPushButton, QLineEdit, QSpinBox, QComboBox, QGroupBox, QProgressBar {{
                 font-size: 13px;
                 font-family: "DejaVu Sans Mono";
+                letter-spacing: 0px;
+            }}
+            QLabel {{
+                color: {text_soft};
+            }}
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
             }}
             QGroupBox {{
-                border: 1px solid rgba(255, 255, 255, 0.14);
-                margin-top: 14px;
-                padding-top: 16px;
+                background-color: {panel};
+                border: 1px solid {line};
+                border-radius: 4px;
+                margin-top: 18px;
+                padding: 18px 16px 14px 16px;
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
+                subcontrol-position: top left;
+                left: 14px;
+                padding: 0 8px;
+                background-color: {bg_color};
                 color: {accent_color};
                 font-size: 14px;
                 font-weight: 700;
             }}
-            QLineEdit, QSpinBox {{
+            QLineEdit, QSpinBox, QComboBox {{
                 min-height: 36px;
                 padding: 6px 10px;
-                border: 1px solid {accent_color};
+                border: 1px solid {line};
+                border-radius: 3px;
                 color: {accent_color};
-                background-color: {bg_color};
+                background-color: {field};
                 selection-background-color: {accent_color};
+                selection-color: {bg_color};
+            }}
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{
+                border: 1px solid {accent_color};
+                background-color: {panel};
+            }}
+            QComboBox::drop-down {{
+                width: 28px;
+                border: none;
+            }}
+            QComboBox QAbstractItemView {{
+                color: {accent_color};
+                background-color: {panel};
+                border: 1px solid {line};
+                selection-background-color: {line_soft};
             }}
             QPushButton {{
                 min-height: 36px;
                 padding: 6px 12px;
+                border: 1px solid {line};
+                border-radius: 3px;
+                color: {accent_color};
+                background-color: {field};
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                border-color: {accent_color};
+                color: {accent_q.lighter(150).name()};
+                background-color: {line_faint};
+            }}
+            QPushButton:pressed {{
+                background-color: {line_soft};
+            }}
+            QPushButton:disabled {{
+                color: #666666;
+                border-color: #444444;
+                background-color: #111111;
+            }}
+            QCheckBox {{
+                color: {text_soft};
+                spacing: 10px;
+                padding: 4px 0;
+                background: transparent;
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border: 1px solid {line};
+                border-radius: 2px;
+                background: {field};
+            }}
+            QCheckBox::indicator:hover {{
+                border: 1px solid {accent_color};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {accent_color};
+                border: 1px solid {accent_color};
+            }}
+            QProgressBar {{
+                min-height: 22px;
+                border: 1px solid {line_soft};
+                border-radius: 3px;
+                color: {text_soft};
+                background-color: {field};
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background-color: {accent_color};
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 10px;
+                margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {line};
+                min-height: 28px;
+                border-radius: 4px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+                border: none;
+                background: transparent;
+            }}
+            QScrollBar:horizontal {{
+                height: 0;
+                background: transparent;
+            }}
+            QLabel[muted="true"] {{
+                color: {muted};
             }}
             """
         )
@@ -561,7 +743,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(pp_group)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Downloads")
+        self._add_settings_tab(tab, "Downloads")
 
     def goldberg_checked_warning(self) -> None:
         """Warn when Goldberg is enabled alongside Steam integration."""
@@ -688,7 +870,7 @@ class SettingsDialog(QDialog):
         self.morrenus_tab_initialized = False
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
-        self.tab_widget.addTab(tab, "Integrações")
+        self._add_settings_tab(tab, "Integrações")
 
     def _on_tab_changed(self, index: int) -> None:
         """Handle tab change events."""
@@ -783,7 +965,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(settings_group)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Steam")
+        self._add_settings_tab(tab, "Steam")
 
     def _create_tools_tab(self) -> None:
         """Create the Tools settings tab."""
@@ -856,7 +1038,7 @@ class SettingsDialog(QDialog):
             layout.addWidget(reg_group)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Ferramentas")
+        self._add_settings_tab(tab, "Ferramentas")
 
     def _create_automation_tab(self) -> None:
         """Create the automation settings tab."""
@@ -914,7 +1096,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(hint)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Automação")
+        self._add_settings_tab(tab, "Automação")
 
     def _create_opencloudsave_tab(self) -> None:
         """Create the OpenCloudSave settings tab."""
@@ -995,7 +1177,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(hint)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "OpenCloudSave")
+        self._add_settings_tab(tab, "OpenCloudSave")
 
     def _create_discord_tab(self) -> None:
         """Create the Discord Rich Presence settings tab."""
@@ -1089,7 +1271,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(rpc_group)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Discord")
+        self._add_settings_tab(tab, "Discord")
         self._refresh_discord_status()
 
     def _refresh_discord_status(self) -> None:
@@ -1195,7 +1377,7 @@ class SettingsDialog(QDialog):
         updates_group.setLayout(updates_layout)
         layout.addWidget(updates_group)
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Updates")
+        self._add_settings_tab(tab, "Updates")
         self._wire_update_manager()
 
     def _wire_update_manager(self) -> None:
@@ -1390,7 +1572,7 @@ class SettingsDialog(QDialog):
         volume_group.setLayout(volume_layout)
         layout.addWidget(volume_group)
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Áudio")
+        self._add_settings_tab(tab, "Áudio")
 
     def _preview_audio_mix(self) -> None:
         if not self.main_window or not hasattr(self.main_window, "audio_manager"):
@@ -1439,6 +1621,30 @@ class SettingsDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(15, 15, 15, 15)
+
+        preset_group = QGroupBox("Preset visual")
+        preset_layout = QVBoxLayout()
+        preset_layout.addWidget(QLabel("Tema de anime"))
+        self.visual_preset_combo = QComboBox()
+        current_preset = normalize_visual_preset(
+            self.settings.value("visual_preset", DEFAULT_VISUAL_PRESET, type=str)
+        )
+        current_index = 0
+        for index, preset in enumerate(all_visual_presets()):
+            self.visual_preset_combo.addItem(preset.label, preset.key)
+            if preset.key == current_preset:
+                current_index = index
+        self.visual_preset_combo.setCurrentIndex(current_index)
+        self.visual_preset_combo.currentIndexChanged.connect(
+            self.on_visual_preset_changed
+        )
+        preset_layout.addWidget(self.visual_preset_combo)
+        SettingsDialog._add_tool_explanation(
+            preset_layout,
+            "Troca main, miniatura e GIFs de download. As cores continuam editáveis e recolorem os GIFs.",
+        )
+        preset_group.setLayout(preset_layout)
+        layout.addWidget(preset_group)
 
         # Color Group
         color_group = QGroupBox("Configurações de cor")
@@ -1540,7 +1746,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(gif_layout)
 
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Estilo")
+        self._add_settings_tab(tab, "Estilo")
 
     @staticmethod
     def _add_checkbox_explanation(layout: QVBoxLayout, text: str) -> None:
@@ -1553,6 +1759,19 @@ class SettingsDialog(QDialog):
         h_layout.addSpacing(14)
         h_layout.addWidget(lbl)
         layout.addLayout(h_layout)
+
+    def on_visual_preset_changed(self, _index: int) -> None:
+        if not self.visual_preset_combo:
+            return
+        preset = get_visual_preset(self.visual_preset_combo.currentData())
+        if self.accent_color_button:
+            self.accent_color_button.setStyleSheet(
+                f"background-color: {preset.accent};"
+            )
+        if self.bg_color_button:
+            self.bg_color_button.setStyleSheet(
+                f"background-color: {preset.background};"
+            )
 
     # Color Handlers
     def choose_accent_color(self) -> None:
@@ -1674,6 +1893,11 @@ class SettingsDialog(QDialog):
             QTimer.singleShot(0, self.main_window.update_manager.reload_settings)
 
     def _save_general_settings(self) -> None:
+        self._save_api_keys_from_inputs()
+
+    def _save_api_keys_from_inputs(self) -> None:
+        if not self.api_key_input:
+            return
         api_key = self.api_key_input.text().strip()
         self.settings.setValue("morrenus_api_key", api_key)
         if self.sgdb_api_key_input:
@@ -1816,9 +2040,18 @@ class SettingsDialog(QDialog):
         bg_s = self.bg_color_button.styleSheet()
         u_accent = acc_s.split("background-color: ")[1].split(";")[0]
         u_bg = bg_s.split("background-color: ")[1].split(";")[0]
+        previous_preset = normalize_visual_preset(
+            self.settings.value("visual_preset", DEFAULT_VISUAL_PRESET, type=str)
+        )
+        selected_preset = (
+            normalize_visual_preset(self.visual_preset_combo.currentData())
+            if self.visual_preset_combo
+            else DEFAULT_VISUAL_PRESET
+        )
 
         self.settings.setValue("user_accent_color", u_accent)
         self.settings.setValue("user_background_color", u_bg)
+        self.settings.setValue("visual_preset", selected_preset)
 
         prev_mode = self.settings.value("ui_mode", "default")
         applied_accent = u_accent
@@ -1851,6 +2084,9 @@ class SettingsDialog(QDialog):
         self.settings.setValue("font-style", style)
 
         if self.main_window and hasattr(self.main_window, "ui_state"):
+            gif_manager = getattr(self.main_window, "gif_manager", None)
+            if gif_manager is not None and previous_preset != selected_preset:
+                gif_manager.regenerate_anyway = True
             # noinspection PyUnresolvedReferences
             self.main_window.ui_state.apply_style_settings()
 

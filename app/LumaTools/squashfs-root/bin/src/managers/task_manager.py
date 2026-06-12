@@ -30,6 +30,8 @@ from core.fix_planner import apply_ryuu_fix, record_online_fix_layer
 from core.ryuu_client import RyuuClient, RyuuClientError, load_ryuu_auth_key
 
 from utils.helpers import get_base_path
+from utils.depot_manifest_cache import cache_depot_manifests
+from utils.depot_selection import complete_base_depot_selection
 from utils.proton_tools import (
     apply_steam_compat_tool,
     build_default_proton_selection,
@@ -37,6 +39,11 @@ from utils.proton_tools import (
     depot_selection_requires_proton,
 )
 from utils.steam_manifest import get_game_directory, repair_installed_app_state, write_acf_file
+from utils.windows_redist_detector import (
+    detect_windows_redists,
+    protontricks_command,
+    write_proton_requirements_report,
+)
 from utils.wrapper_metadata import persist_selected_dlcs
 from utils.yaml_config_manager import (
     get_user_config_path,
@@ -268,6 +275,11 @@ class TaskManager(QObject):
             selected_depots = (
                 self.main_window.ui_state.depot_dialog.get_selected_depots()
             )
+            selected_depots = complete_base_depot_selection(
+                selected_depots,
+                game_data.get("depots") or {},
+                game_data.get("base_depot_ids") or [],
+            )
             if self.game_data:
                 self.game_data["selected_depots_list"] = selected_depots
                 self.game_data.update(
@@ -326,15 +338,27 @@ class TaskManager(QObject):
         if slssteam_mode:
             self._handle_slssteam_mode()
             if existing_library_path:
-                return existing_library_path
+                return steam_helpers.resolve_steam_library_path(
+                    existing_library_path,
+                    steam_helpers.get_steam_libraries(),
+                )
             return self._get_library_destination_path()
         elif library_mode:
             if existing_library_path:
-                return existing_library_path
+                return steam_helpers.resolve_steam_library_path(
+                    existing_library_path,
+                    steam_helpers.get_steam_libraries(),
+                )
             return self._get_library_destination_path()
         else:
-            return QFileDialog.getExistingDirectory(
+            selected_path = QFileDialog.getExistingDirectory(
                 self.main_window, "Select Destination Folder"
+            )
+            if not selected_path:
+                return None
+            return steam_helpers.resolve_steam_library_path(
+                selected_path,
+                steam_helpers.get_steam_libraries(),
             )
 
     def _get_library_destination_path(self):
@@ -343,20 +367,36 @@ class TaskManager(QObject):
 
         libraries = steam_helpers.get_steam_libraries()
         if libraries:
-            preferred_library = steam_helpers.get_preferred_steam_library()
-            if preferred_library and preferred_library in libraries:
-                logger.info(
-                    "Auto-selected Steam library for active Steam mode: %s",
-                    preferred_library,
-                )
-                return preferred_library
             if len(libraries) == 1:
+                logger.info("Auto-selected single Steam library: %s", libraries[0])
                 return libraries[0]
-            dialog = SteamLibraryDialog(libraries, self.main_window)
+
+            saved_library = self.settings.value(
+                "preferred_steam_library_path", "", type=str
+            )
+            preferred_library = steam_helpers.get_preferred_steam_library()
+            initial_library = (
+                saved_library
+                if saved_library in libraries
+                else preferred_library if preferred_library in libraries else libraries[0]
+            )
+            dialog = SteamLibraryDialog(
+                libraries,
+                self.main_window,
+                initial_path=initial_library,
+            )
             if dialog.exec():
-                return dialog.get_selected_path()
-            else:
-                return None
+                selected_path = dialog.get_selected_path()
+                if selected_path:
+                    selected_path = steam_helpers.resolve_steam_library_path(
+                        selected_path, libraries
+                    )
+                    self.settings.setValue(
+                        "preferred_steam_library_path", selected_path
+                    )
+                    self.settings.sync()
+                return selected_path
+            return None
         else:
             preferred_library = steam_helpers.get_preferred_steam_library()
             if preferred_library:
@@ -549,6 +589,7 @@ class TaskManager(QObject):
             self._finalize_platform_specifics(config_enabled)
             self._finalize_goldberg(auto_apply_goldberg)
             self._finalize_online_fix()
+            self._finalize_proton_runtime_report()
             self._finalize_greenluma(config_enabled)
 
         except OSError as e:
@@ -774,6 +815,39 @@ class TaskManager(QObject):
                 logger.error("Falha ao baixar o arquivo do Online-Fix.")
         except Exception as e:
             logger.error(f"Erro no fluxo automático do Online-Fix: {e}")
+
+    def _finalize_proton_runtime_report(self):
+        if sys.platform != "linux" or not self.game_data or not self.current_dest_path:
+            return
+
+        if not (
+            self.game_data.get("force_proton")
+            or self.game_data.get("apply_online_fix")
+        ):
+            return
+
+        game_dir = get_game_directory(self.current_dest_path, self.game_data)
+        requirements = detect_windows_redists(game_dir)
+        if not requirements:
+            return
+
+        appid = str(self.game_data.get("appid", ""))
+        report_path = write_proton_requirements_report(
+            game_dir,
+            appid=appid,
+            game_name=self.game_data.get("game_name", ""),
+            requirements=requirements,
+            proton_tool=self.game_data.get("proton_tool_display_name")
+            or self.game_data.get("proton_tool_name", ""),
+            online_fix=bool(self.game_data.get("apply_online_fix")),
+        )
+        logger.warning(
+            "Windows runtime requirements detected for AppID %s: %s. Report: %s. Suggested: %s",
+            appid,
+            ", ".join(item.display_name for item in requirements),
+            report_path,
+            protontricks_command(appid, requirements),
+        )
 
     def _finalize_greenluma(self, config_enabled: bool):
         # 6. GreenLuma Files (Win32)
@@ -1039,28 +1113,22 @@ class TaskManager(QObject):
             return
 
         temp_manifest_dir = os.path.join(tempfile.gettempdir(), "mistwalker_manifests")
-        if not os.path.exists(temp_manifest_dir):
-            return
-
-        target_depotcache_dir = os.path.join(self.current_dest_path, "depotcache")
-
-        try:
-            os.makedirs(target_depotcache_dir, exist_ok=True)
-            manifests_map = self.game_data.get("manifests", {})
-            if not manifests_map:
-                shutil.rmtree(temp_manifest_dir)
-                return
-
-            for depot_id, manifest_gid in manifests_map.items():
-                manifest_filename = f"{depot_id}_{manifest_gid}.manifest"
-                source_path = os.path.join(temp_manifest_dir, manifest_filename)
-                dest_path = os.path.join(target_depotcache_dir, manifest_filename)
-                if os.path.exists(source_path):
-                    shutil.move(source_path, dest_path)
-
-            shutil.rmtree(temp_manifest_dir)
-        except OSError as e:
-            logger.error(f"Failed to move manifests to depotcache: {e}")
+        result = cache_depot_manifests(
+            self.current_dest_path,
+            self.game_data.get("manifests", {}),
+            selected_depots=self.game_data.get("selected_depots_list"),
+            source_dir=temp_manifest_dir,
+            source_zip=self.game_data.get("source_zip_path"),
+        )
+        logger.info(
+            "Depot manifest cache: expected=%s available=%s copied=%s recovered=%s",
+            result.expected,
+            result.available,
+            result.copied,
+            result.recovered_from_zip,
+        )
+        if result.missing:
+            logger.error("Missing depot manifests after recovery: %s", ", ".join(result.missing))
 
     def _set_linux_binary_permissions(self):
         if not self.game_data or not self.current_dest_path:

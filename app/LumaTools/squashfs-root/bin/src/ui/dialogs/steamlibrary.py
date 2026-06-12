@@ -20,7 +20,12 @@ logger = logging.getLogger(__name__)
 class SteamLibraryDialog(QDialog):
     """Dialog for selecting a Steam library folder."""
 
-    def __init__(self, library_paths: List[str], parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        library_paths: List[str],
+        parent: Optional[QWidget] = None,
+        initial_path: Optional[str] = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Selecionar biblioteca da Steam")
         self.setMinimumWidth(500)
@@ -29,9 +34,11 @@ class SteamLibraryDialog(QDialog):
         self.list_widget: Optional[QListWidget] = None
 
         logger.debug(f"Opening SteamLibraryDialog with {len(library_paths)} libraries.")
-        self._setup_ui(library_paths)
+        self._setup_ui(library_paths, initial_path)
 
-    def _setup_ui(self, library_paths: List[str]) -> None:
+    def _setup_ui(
+        self, library_paths: List[str], initial_path: Optional[str] = None
+    ) -> None:
         """Initialize the layout and widgets."""
         layout = QVBoxLayout(self)
 
@@ -44,18 +51,23 @@ class SteamLibraryDialog(QDialog):
         # Keep backend order intact. On Linux this puts the library belonging
         # to the currently running Steam mode (native/Flatpak/Snap) first.
         preferred_library = steam_helpers.get_preferred_steam_library()
+        selected_row = 0
         for index, path in enumerate(library_paths):
             item = QListWidgetItem(self._display_path(path, preferred_library))
             item.setData(Qt.ItemDataRole.UserRole, path)
             # Explicitly set size hint to prevent overlap
             item.setSizeHint(QSize(0, 24))
             self.list_widget.addItem(item)
+            if initial_path and path == initial_path:
+                selected_row = index
 
         layout.addWidget(self.list_widget)
 
-        # Select first item by default if available
+        # Remembering a choice only preselects it; users with multiple
+        # libraries still get the dialog and can change the destination.
         if self.list_widget.count() > 0:
-            self.list_widget.setCurrentRow(0)
+            self.list_widget.setCurrentRow(selected_row)
+            self.list_widget.itemDoubleClicked.connect(lambda _item: self.accept())
 
         buttons = create_standard_buttons(self.accept, self.reject)
         layout.addWidget(buttons)

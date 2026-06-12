@@ -462,11 +462,11 @@ def detect_recent_decryption_key_issue(
     *,
     max_lines: int = 700,
 ) -> str:
-    """Return the last Steam content log line showing a depot key failure.
+    """Return the last Steam content log line showing encrypted depot content.
 
-    This is diagnostic only. A "Missing decryption key" line means Steam itself
-    cannot initialize one of the app's depots, so resetting appmanifest state
-    may clear stale update flags but cannot make Steam download that depot.
+    This is diagnostic only. These messages mean Steam or the downloader did
+    not receive content it can decrypt. Resetting appmanifest state cannot make
+    that depot launchable.
     """
     if not steam_root_or_library or not appid:
         return ""
@@ -478,6 +478,14 @@ def detect_recent_decryption_key_issue(
     ]
     appid_text = str(appid)
     last_match = ""
+    encrypted_patterns = (
+        "missing decryption key",
+        "content still encrypted",
+        "missing depot key",
+        "unable to get depot decryption key",
+        "no decryption key",
+        "depot encrypted",
+    )
 
     for log_path in candidates:
         if not log_path.is_file():
@@ -487,9 +495,10 @@ def detect_recent_decryption_key_issue(
         except OSError:
             continue
         for line in lines[-max_lines:]:
+            lowered = line.lower()
             if (
-                f"AppID {appid_text}" in line
-                and "Missing decryption key" in line
+                f"appid {appid_text}" in lowered
+                and any(pattern in lowered for pattern in encrypted_patterns)
             ):
                 last_match = line.strip()
 

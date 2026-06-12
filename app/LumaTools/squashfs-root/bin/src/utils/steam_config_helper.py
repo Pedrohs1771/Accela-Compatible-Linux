@@ -7,6 +7,20 @@ from pathlib import Path
 
 logger = logging.getLogger("LumaTools.SteamConfigHelper")
 
+LUMATOOLS_MANAGED_OVERRIDES = {
+    "onlinefix",
+    "onlinefix64",
+    "steamoverlay",
+    "steamoverlay32",
+    "steamoverlay64",
+    "steam_api",
+    "steam_api64",
+    "version",
+    "winhttp",
+    "wininet",
+    "winmm",
+}
+
 
 def _escape_vdf_value(value):
     return str(value).replace("\\", "\\\\").replace('"', '\\"')
@@ -59,15 +73,18 @@ def _merge_launch_options(existing, desired):
     if not existing_match or not desired_match:
         return desired
 
-    merged_overrides = []
-    positions = {}
-    for item in _split_overrides(existing_match.group(1)) + _split_overrides(desired_match.group(1)):
+    desired_overrides = _split_overrides(desired_match.group(1))
+    desired_keys = {
+        item.split("=", 1)[0].lower()
+        for item in desired_overrides
+    }
+    preserved_overrides = []
+    for item in _split_overrides(existing_match.group(1)):
         key = item.split("=", 1)[0].lower()
-        if key in positions:
-            merged_overrides[positions[key]] = item
-        else:
-            positions[key] = len(merged_overrides)
-            merged_overrides.append(item)
+        if key in LUMATOOLS_MANAGED_OVERRIDES or key in desired_keys:
+            continue
+        preserved_overrides.append(item)
+    merged_overrides = preserved_overrides + desired_overrides
 
     merged = re.sub(
         wine_pattern,

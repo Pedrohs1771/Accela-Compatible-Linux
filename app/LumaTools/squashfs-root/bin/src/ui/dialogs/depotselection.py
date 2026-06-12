@@ -44,6 +44,7 @@ class DepotSelectionDialog(QDialog):
         layout.setSpacing(10)
 
         self.anchor_row = -1
+        self._online_fix_filter_enabled = False
 
         self.header_label = QLabel("Carregando imagem de capa...")
         self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -193,20 +194,23 @@ class DepotSelectionDialog(QDialog):
 
         container = QFrame()
         container.setObjectName("protonCompatibilitySection")
+        self.proton_container = container
         section_layout = QVBoxLayout(container)
         section_layout.setContentsMargins(10, 10, 10, 10)
         section_layout.setSpacing(6)
 
         title = QLabel("Compatibilidade Steam")
+        self.proton_title = title
         section_layout.addWidget(title)
 
         self.proton_checkbox = QCheckBox("Forcar Proton para depots Windows")
-        self.proton_checkbox.setChecked(True)
+        self.proton_checkbox.setChecked(False)
         self.proton_checkbox.toggled.connect(self._refresh_proton_section)
         section_layout.addWidget(self.proton_checkbox)
 
         tool_row = QHBoxLayout()
         tool_label = QLabel("Ferramenta:")
+        self.proton_tool_label = tool_label
         tool_row.addWidget(tool_label)
 
         self.proton_combo = QComboBox()
@@ -214,15 +218,11 @@ class DepotSelectionDialog(QDialog):
         tool_row.addWidget(self.proton_combo, 1)
         section_layout.addLayout(tool_row)
 
-        self.online_checkbox = QCheckBox("Ativar compatibilidade online (Goldberg)")
-        self.online_checkbox.setToolTip("Aplica emulador de Steam (Goldberg) para habilitar funcionalidades online/multiplayer.")
-        self.online_checkbox.setChecked(False)
-        section_layout.addWidget(self.online_checkbox)
+        self.online_checkbox = None
 
         self.online_fix_checkbox = QCheckBox("Implementar Online Compatible")
         self.online_fix_checkbox.setToolTip(
-            "OnlineFix usa arquivos Windows. Selecione um depot [Windows] e mantenha "
-            "Proton ativo para jogar online."
+            "Selecione primeiro um depot [Windows]. OnlineFix roda a versao Windows via Proton."
         )
         self.online_fix_checkbox.setChecked(False)
         self.online_fix_checkbox.toggled.connect(self._on_online_fix_toggled)
@@ -230,16 +230,17 @@ class DepotSelectionDialog(QDialog):
 
         self.online_fix_notice = QLabel(
             "OnlineFix requer versão [Windows] rodando via Proton. Depots [Linux] "
-            "continuam disponíveis, mas o OnlineFix será desativado para eles."
+            "e [Mac] somem da lista enquanto esta opção estiver marcada. Depots "
+            "[All] continuam visíveis quando forem conteúdo comum."
         )
         self.online_fix_notice.setWordWrap(True)
         self.online_fix_notice.setVisible(False)
         section_layout.addWidget(self.online_fix_notice)
 
         help_label = QLabel(
-            "LumaTools aplica o modo de compatibilidade da Steam usando Proton "
-            "Experimental por padrao quando houver depots Windows."
+            "Proton so e usado quando a selecao atual precisa rodar depots Windows no Linux."
         )
+        self.proton_help_label = help_label
         help_label.setWordWrap(True)
         section_layout.addWidget(help_label)
 
@@ -260,18 +261,98 @@ class DepotSelectionDialog(QDialog):
 
         selected_depots = self.get_selected_depots()
         requires_proton = depot_selection_requires_proton(selected_depots, self.depots)
+        has_windows_selection = self._selected_has_windows_depot()
         proton_available = bool(self._proton_tools)
         enabled = requires_proton and proton_available
+        show_windows_controls = has_windows_selection
+
+        self.proton_checkbox.blockSignals(True)
+        try:
+            if requires_proton and proton_available:
+                self.proton_checkbox.setChecked(True)
+            else:
+                self.proton_checkbox.setChecked(False)
+        finally:
+            self.proton_checkbox.blockSignals(False)
 
         self.proton_checkbox.setEnabled(enabled)
         self.proton_combo.setEnabled(enabled and self.proton_checkbox.isChecked())
+        self.proton_checkbox.setVisible(show_windows_controls)
+        self.proton_combo.setVisible(show_windows_controls)
+        if hasattr(self, "proton_tool_label"):
+            self.proton_tool_label.setVisible(show_windows_controls)
 
         if requires_proton and not proton_available:
             self.proton_checkbox.setToolTip(
                 "Nenhum Proton foi encontrado na Steam desta maquina."
             )
+        elif requires_proton:
+            self.proton_checkbox.setToolTip(
+                "Obrigatorio para rodar depot Windows no Linux."
+            )
         else:
-            self.proton_checkbox.setToolTip("")
+            self.proton_checkbox.setToolTip(
+                "Nao necessario para a selecao atual."
+            )
+
+        if hasattr(self, "proton_help_label"):
+            if not selected_depots:
+                self.proton_help_label.setText(
+                    "Selecione um depot. As opcoes de Proton aparecem somente para depots [Windows]."
+                )
+            elif has_windows_selection:
+                self.proton_help_label.setText(
+                    "Depot [Windows] selecionado: LumaTools usara Proton e pode aplicar OnlineFix."
+                )
+            else:
+                self.proton_help_label.setText(
+                    "Selecao nativa desta maquina: Proton e OnlineFix nao sao necessarios."
+                )
+
+        self._refresh_online_fix_state()
+
+    def _selected_has_windows_depot(self):
+        return any(
+            self._platform_family_for_depot(
+                self.depots.get(str(depot_id), {}).get("oslist")
+            )
+            == "windows"
+            for depot_id in self.get_selected_depots()
+        )
+
+    def _refresh_online_fix_state(self):
+        if not hasattr(self, "online_fix_checkbox") or self.online_fix_checkbox is None:
+            return
+
+        has_windows_selection = self._selected_has_windows_depot()
+        can_use_online_fix = has_windows_selection and bool(self._proton_tools)
+
+        self.online_fix_checkbox.blockSignals(True)
+        try:
+            if not can_use_online_fix:
+                self.online_fix_checkbox.setChecked(False)
+        finally:
+            self.online_fix_checkbox.blockSignals(False)
+
+        self.online_fix_checkbox.setEnabled(can_use_online_fix)
+        self.online_fix_checkbox.setVisible(has_windows_selection)
+        if not has_windows_selection:
+            self.online_fix_checkbox.setToolTip(
+                "Selecione um depot [Windows] para habilitar o OnlineFix."
+            )
+        elif not self._proton_tools:
+            self.online_fix_checkbox.setToolTip(
+                "OnlineFix precisa de Proton instalado na Steam."
+            )
+        else:
+            self.online_fix_checkbox.setToolTip(
+                "Aplica OnlineFix na versao Windows e forca Proton."
+            )
+
+        if self.online_fix_notice is not None:
+            self.online_fix_notice.setVisible(
+                has_windows_selection and self.online_fix_checkbox.isChecked()
+            )
 
     def get_proton_preferences(self):
         defaults = build_default_proton_selection(self.get_selected_depots(), self.depots)
@@ -290,7 +371,7 @@ class DepotSelectionDialog(QDialog):
         defaults["proton_tool_display_name"] = (
             selected_text if defaults["force_proton"] else ""
         )
-        defaults["online_mode"] = self.online_checkbox.isChecked() if hasattr(self, "online_checkbox") else False
+        defaults["online_mode"] = False
         defaults["apply_online_fix"] = self.online_fix_checkbox.isChecked() if hasattr(self, "online_fix_checkbox") else False
         return defaults
 
@@ -306,6 +387,14 @@ class DepotSelectionDialog(QDialog):
         )
 
     def _on_online_fix_toggled(self, enabled):
+        if enabled and not self._selected_has_windows_depot():
+            self.online_fix_checkbox.blockSignals(True)
+            self.online_fix_checkbox.setChecked(False)
+            self.online_fix_checkbox.blockSignals(False)
+            self._apply_online_fix_filter(False)
+            self._refresh_online_fix_state()
+            return
+
         if self.online_fix_notice is not None:
             self.online_fix_notice.setVisible(bool(enabled))
 
@@ -313,7 +402,52 @@ class DepotSelectionDialog(QDialog):
             if self.proton_checkbox is not None:
                 self.proton_checkbox.setChecked(True)
 
+        self._apply_online_fix_filter(enabled)
         self._refresh_proton_section()
+
+    def _apply_online_fix_filter(self, enabled):
+        self._online_fix_filter_enabled = bool(enabled)
+        if not hasattr(self, "list_widget") or self.list_widget is None:
+            return
+
+        has_visible_checked_item = False
+
+        self.list_widget.blockSignals(True)
+        try:
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                if item is None:
+                    continue
+
+                depot_id = str(item.data(Qt.ItemDataRole.UserRole))
+                depot_data = self.depots.get(depot_id, {})
+                family = self._platform_family_for_depot(depot_data.get("oslist"))
+                compatible = family == "windows" or self._is_generic_depot(
+                    depot_data.get("oslist")
+                )
+                hidden = bool(enabled and not compatible)
+
+                item.setHidden(hidden)
+                if hidden:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                    continue
+
+                if item.checkState() == Qt.CheckState.Checked:
+                    has_visible_checked_item = True
+
+            if enabled and not has_visible_checked_item:
+                self.online_fix_checkbox.blockSignals(True)
+                self.online_fix_checkbox.setChecked(False)
+                self.online_fix_checkbox.blockSignals(False)
+                self._online_fix_filter_enabled = False
+                for i in range(self.list_widget.count()):
+                    item = self.list_widget.item(i)
+                    if item is not None:
+                        item.setHidden(False)
+        finally:
+            self.list_widget.blockSignals(False)
+
+        self.anchor_row = -1
 
     @staticmethod
     def _normalize_os_value(os_val):
@@ -528,6 +662,9 @@ class DepotSelectionDialog(QDialog):
         self.accept()
 
     def on_depot_item_clicked(self, item):
+        if item is None or item.isHidden():
+            return
+
         modifiers = QApplication.keyboardModifiers()
         current_row = self.list_widget.row(item)
 
@@ -558,7 +695,7 @@ class DepotSelectionDialog(QDialog):
                 self.list_widget.blockSignals(True)
                 for i in range(start_row, end_row + 1):
                     row_item = self.list_widget.item(i)
-                    if row_item is not None:
+                    if row_item is not None and not row_item.isHidden():
                         row_item.setCheckState(target_state)
                 self.list_widget.blockSignals(False)
 
@@ -566,6 +703,8 @@ class DepotSelectionDialog(QDialog):
             item.setCheckState(new_state)
             self.anchor_row = current_row
 
+        if not self._selected_has_windows_depot() and hasattr(self, "online_fix_checkbox"):
+            self._apply_online_fix_filter(False)
         self._refresh_proton_section()
 
     def _toggle_all_checkboxes(self, check=True):
@@ -573,11 +712,13 @@ class DepotSelectionDialog(QDialog):
         self.list_widget.blockSignals(True)
         for i in range(self.list_widget.count()):
             row_item = self.list_widget.item(i)
-            if row_item is not None:
+            if row_item is not None and not row_item.isHidden():
                 row_item.setCheckState(state)
         self.list_widget.blockSignals(False)
 
         self.anchor_row = -1
+        if not self._selected_has_windows_depot() and hasattr(self, "online_fix_checkbox"):
+            self._apply_online_fix_filter(False)
         self._refresh_proton_section()
 
     def _fetch_header_image(self, app_id):
@@ -676,6 +817,8 @@ class DepotSelectionDialog(QDialog):
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if item is None:
+                continue
+            if item.isHidden():
                 continue
             if item.checkState() == Qt.CheckState.Checked:
                 selected.append(item.data(Qt.ItemDataRole.UserRole))

@@ -43,6 +43,41 @@ class SteamConfigHelperTests(unittest.TestCase):
         self.assertNotIn("steam_api64=n;", merged)
         self.assertNotIn("winmm=n;", merged)
 
+    def test_preserves_wined3d_fallback_when_refreshing_onlinefix_options(self):
+        old = (
+            'PROTON_USE_WINED3D=1 '
+            'WINEDLLOVERRIDES="onlinefix=n,b;steam_api=n,b" %command%'
+        )
+        desired = (
+            'WINEDLLOVERRIDES="onlinefix=n,b;steam_api=n,b;'
+            'winmm=n,b;winhttp=n,b" %command%'
+        )
+
+        merged = _merge_launch_options(old, desired)
+
+        self.assertIn("PROTON_USE_WINED3D=1", merged)
+        self.assertEqual(merged.count("PROTON_USE_WINED3D=1"), 1)
+        self.assertIn("winhttp=n,b", merged)
+
+    def test_replaces_old_64_bit_onlinefix_overrides_with_32_bit_set(self):
+        old = (
+            'PROTON_LOG=1 WINEDLLOVERRIDES="onlinefix64=n,b;'
+            'steamoverlay64=n,b;steam_api64=n,b;dinput8=n,b" %command%'
+        )
+        desired = (
+            'WINEDLLOVERRIDES="onlinefix=n,b;winmm=n,b;'
+            'steam_api=n,b;winhttp=n,b" %command%'
+        )
+
+        merged = _merge_launch_options(old, desired)
+
+        self.assertIn("PROTON_LOG=1", merged)
+        self.assertIn("dinput8=n,b", merged)
+        self.assertIn("onlinefix=n,b", merged)
+        self.assertNotIn("onlinefix64", merged)
+        self.assertNotIn("steamoverlay64", merged)
+        self.assertNotIn("steam_api64", merged)
+
     def test_set_launch_options_updates_all_user_configs(self):
         with tempfile.TemporaryDirectory() as tmp:
             steam_root = Path(tmp)

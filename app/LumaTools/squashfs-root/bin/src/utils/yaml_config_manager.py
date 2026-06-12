@@ -546,7 +546,7 @@ def _fix_app_tokens_indentation(content: str) -> Tuple[str, bool]:
         section_end = len(content)
 
     section_content = content[section_start:section_end]
-    token_pattern = re.compile(r"(^)(\s*)(\d+)(\s* : \s*[^\n]*)", re.MULTILINE)
+    token_pattern = re.compile(r"(^)(\s*)(\d+)(\s*:\s*[^\n]*)", re.MULTILINE)
     fixed_section = token_pattern.sub(r"\1  \3\4", section_content)
 
     if fixed_section != section_content:
@@ -555,6 +555,66 @@ def _fix_app_tokens_indentation(content: str) -> Tuple[str, bool]:
         return fixed_content, True
 
     return content, False
+
+
+def _is_valid_app_token_value(token: str) -> bool:
+    token = str(token).strip()
+    if not token.isdecimal():
+        return False
+    try:
+        value = int(token)
+    except ValueError:
+        return False
+    return 0 < value <= (2**64 - 1)
+
+
+def _sanitize_app_tokens(content: str) -> Tuple[str, bool]:
+    """Remove invalid AppTokens values that make SLSsteam abort on startup."""
+    app_tokens_pattern = re.compile(r"^AppTokens:\s*$", re.MULTILINE)
+    section_start = _get_section_start(content, app_tokens_pattern)
+    if section_start is None:
+        return content, False
+
+    next_key_pattern = re.compile(r"^[A-Za-z][A-Za-z0-9]*:\s*$", re.MULTILINE)
+    section_end = _get_section_end(content, section_start, next_key_pattern)
+    section_content = content[section_start:section_end]
+    lines = section_content.splitlines()
+    keep_trailing_newline = section_content.endswith("\n")
+
+    changed = False
+    sanitized_lines: list[str] = []
+    token_pattern = re.compile(r"^\s*(\d+)\s*:\s*([^#\s]+)(\s*#.*)?\s*$")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            sanitized_lines.append(line)
+            continue
+
+        match = token_pattern.match(line)
+        if not match:
+            sanitized_lines.append(line)
+            continue
+
+        app_id, token, comment = match.groups()
+        if not _is_valid_app_token_value(token):
+            logger.warning(
+                "Removed invalid AppToken for AppID %s; SLSsteam requires decimal uint64 tokens.",
+                app_id,
+            )
+            changed = True
+            continue
+
+        normalized = f"  {app_id}: {token}{comment or ''}"
+        sanitized_lines.append(normalized)
+        changed = changed or normalized != line
+
+    if not changed:
+        return content, False
+
+    sanitized_section = "\n".join(sanitized_lines)
+    if keep_trailing_newline:
+        sanitized_section += "\n"
+    return content[:section_start] + sanitized_section + content[section_end:], True
 
 
 def fix_slssteam_config_indentation(config_path: Path) -> bool:
@@ -567,8 +627,9 @@ def fix_slssteam_config_indentation(config_path: Path) -> bool:
         fixed_content, mod_apps = _fix_additional_apps_indentation(content)
         fixed_content, mod_merged_apps = _merge_duplicate_additional_apps(fixed_content)
         fixed_content, mod_tokens = _fix_app_tokens_indentation(fixed_content)
+        fixed_content, mod_sanitized_tokens = _sanitize_app_tokens(fixed_content)
 
-        if mod_apps or mod_merged_apps or mod_tokens:
+        if mod_apps or mod_merged_apps or mod_tokens or mod_sanitized_tokens:
             if not _atomic_write(config_path, fixed_content):
                 return False
             logger.info(f"Fixed indentation in {config_path}")
@@ -787,6 +848,17 @@ def _atomic_write_and_log(
 def add_app_token(config_path: Path, app_id: str, token: str) -> bool:
     """Add an AppToken to the AppTokens section in SLSsteam config.yaml."""
     try:
+        app_id = str(app_id).strip()
+        token = str(token).strip()
+        if not app_id.isdecimal():
+            logger.warning("Refusing invalid AppToken AppID: %r", app_id)
+            return False
+        if not _is_valid_app_token_value(token):
+            logger.warning(
+                "Refusing non-uint64 AppToken for AppID %s", app_id
+            )
+            return False
+
         content = _get_config_content_if_enabled(config_path)
         if content is _CONFIG_DISABLED:
             return False
@@ -802,6 +874,7 @@ def add_app_token(config_path: Path, app_id: str, token: str) -> bool:
 
         # Fix indentation FIRST
         fixed_content, _ = _fix_app_tokens_indentation(content)
+        fixed_content, _ = _sanitize_app_tokens(fixed_content)
         content = fixed_content
 
         app_tokens_section = _get_app_tokens_section(content)
@@ -871,7 +944,14 @@ def get_app_tokens(config_path: Path) -> Dict[str, str]:
         for token_match in token_pattern.finditer(section_content):
             app_id = token_match.group(1).strip()
             token = token_match.group(2).strip()
-            tokens[app_id] = token
+            if _is_valid_app_token_value(token):
+                tokens[app_id] = token
+            else:
+                logger.warning(
+                    "Ignoring invalid AppToken for AppID %s while reading %s",
+                    app_id,
+                    config_path,
+                )
 
     except OSError as e:
         logger.error(f"Failed to read AppTokens from {config_path}: {e}", exc_info=True)

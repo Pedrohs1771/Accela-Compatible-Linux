@@ -37,7 +37,14 @@ from utils.proton_tools import (
     depot_selection_requires_proton,
 )
 from utils.steam_manifest import get_game_directory, repair_installed_app_state, write_acf_file
+from utils.windows_redist_detector import (
+    detect_windows_redists,
+    protontricks_command,
+    write_proton_requirements_report,
+)
 from utils.helpers import create_font_from_settings
+from utils.depot_manifest_cache import cache_depot_manifests
+from utils.depot_selection import complete_base_depot_selection
 from utils.wrapper_metadata import persist_selected_dlcs
 from utils.yaml_config_manager import (
     is_greenluma_wrapper_mode_enabled,
@@ -187,17 +194,29 @@ def run_cli_mode(
         if slssteam_mode_local or library_mode:
             libraries = get_steam_libraries()
             if libraries:
-                preferred_library = get_preferred_steam_library()
-                if preferred_library and preferred_library in libraries:
-                    logger.info(
-                        "Auto-selected Steam library for active Steam mode: %s",
-                        preferred_library,
-                    )
-                    return preferred_library
                 if len(libraries) == 1:
+                    logger.info("Auto-selected single Steam library: %s", libraries[0])
                     return libraries[0]
-                path = select_steam_library(libraries)
+
+                saved_library = settings.value(
+                    "preferred_steam_library_path", "", type=str
+                )
+                preferred_library = get_preferred_steam_library()
+                initial_library = (
+                    saved_library
+                    if saved_library in libraries
+                    else preferred_library
+                    if preferred_library in libraries
+                    else libraries[0]
+                )
+                ordered_libraries = [
+                    initial_library,
+                    *(path for path in libraries if path != initial_library),
+                ]
+                path = select_steam_library(ordered_libraries)
                 if path:
+                    settings.setValue("preferred_steam_library_path", path)
+                    settings.sync()
                     return path
                 return None
 
@@ -267,6 +286,11 @@ def run_cli_mode(
             )
             continue
 
+        selected_depots = complete_base_depot_selection(
+            selected_depots,
+            game_data.get("depots") or {},
+            game_data.get("base_depot_ids") or [],
+        )
         logger.info(f"Selected {len(selected_depots)} depots")
 
         # Step 2.5: DLC selection (Windows + GreenLuma wrapper only)
@@ -453,6 +477,8 @@ class CLITaskManager:
             if sys.platform == "linux":
                 self._set_linux_permissions(game_directory)
 
+        self._write_proton_runtime_report()
+
         # Steamless processing
         steamless_enabled = self.settings.value("use_steamless", False, type=bool)
         if steamless_enabled:
@@ -549,30 +575,26 @@ class CLITaskManager:
         import tempfile
 
         temp_manifest_dir = os.path.join(tempfile.gettempdir(), "mistwalker_manifests")
-        if not os.path.exists(temp_manifest_dir):
-            return
-
-        target_depotcache_dir = os.path.join(self.current_dest_path, "depotcache")
-
         try:
-            os.makedirs(target_depotcache_dir, exist_ok=True)
-            manifests_map = self.game_data.get("manifests", {})
-
-            if not manifests_map:
-                shutil.rmtree(temp_manifest_dir)
-                return
-
-            moved_count = 0
-            for depot_id, manifest_gid in manifests_map.items():
-                manifest_filename = f"{depot_id}_{manifest_gid}.manifest"
-                source_path = os.path.join(temp_manifest_dir, manifest_filename)
-                dest = os.path.join(target_depotcache_dir, manifest_filename)
-                if os.path.exists(source_path):
-                    shutil.move(source_path, dest)
-                    moved_count += 1
-
-            self.logger.info(f"Moved {moved_count} manifest files to depotcache.")
-            shutil.rmtree(temp_manifest_dir)
+            result = cache_depot_manifests(
+                self.current_dest_path,
+                self.game_data.get("manifests", {}),
+                selected_depots=self.game_data.get("selected_depots_list"),
+                source_dir=temp_manifest_dir,
+                source_zip=self.game_data.get("source_zip_path"),
+            )
+            self.logger.info(
+                "Depot manifest cache: expected=%s available=%s copied=%s recovered=%s",
+                result.expected,
+                result.available,
+                result.copied,
+                result.recovered_from_zip,
+            )
+            if result.missing:
+                self.logger.error(
+                    "Missing depot manifests after recovery: %s",
+                    ", ".join(result.missing),
+                )
         except (OSError, shutil.Error) as e:
             self.logger.error(f"Failed to move manifests to depotcache: {e}")
 
@@ -669,6 +691,39 @@ class CLITaskManager:
             self.logger.info(
                 f"Steam compatibility forced to '{tool_display}' for AppID {appid}"
             )
+
+    def _write_proton_runtime_report(self):
+        if sys.platform != "linux" or not self.game_data or not self.current_dest_path:
+            return
+
+        if not (
+            self.game_data.get("force_proton")
+            or self.game_data.get("apply_online_fix")
+        ):
+            return
+
+        game_dir = get_game_directory(self.current_dest_path, self.game_data)
+        requirements = detect_windows_redists(game_dir)
+        if not requirements:
+            return
+
+        appid = str(self.game_data.get("appid", ""))
+        report_path = write_proton_requirements_report(
+            game_dir,
+            appid=appid,
+            game_name=self.game_data.get("game_name", ""),
+            requirements=requirements,
+            proton_tool=self.game_data.get("proton_tool_display_name")
+            or self.game_data.get("proton_tool_name", ""),
+            online_fix=bool(self.game_data.get("apply_online_fix")),
+        )
+        self.logger.warning(
+            "Windows runtime requirements detected for AppID %s: %s. Report: %s. Suggested: %s",
+            appid,
+            ", ".join(item.display_name for item in requirements),
+            report_path,
+            protontricks_command(appid, requirements),
+        )
 
     def _apply_goldberg(self, game_directory: str, appid: str, game_name: str) -> bool:
         """Apply Goldberg files to a game directory (CLI mode)."""

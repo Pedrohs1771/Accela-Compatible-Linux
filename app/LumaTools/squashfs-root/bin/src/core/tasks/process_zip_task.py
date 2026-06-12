@@ -16,6 +16,7 @@ from utils.yaml_config_manager import (
     is_slssteam_mode_enabled,
 )
 from core.appinfo_editor import get_appinfo_path, add_token_to_appinfo
+from utils.depot_selection import extract_base_depot_ids
 
 logger = logging.getLogger(__name__)
 
@@ -147,13 +148,11 @@ class ProcessZipTask:
             return None
 
         try:
-            # Extract token from LUA content
-            # Pattern: addtoken(<app_id>, "<token>") with optional whitespace
-            token_pattern = r'addtoken\s*\(\s*\d+\s*,\s*"([^"]+)"\s*\)'
+            token_pattern = r'addtoken\s*\(\s*' + re.escape(str(app_id)) + r'\s*,\s*"([^"]+)"\s*\)'
             match = re.search(token_pattern, lua_content, re.IGNORECASE)
 
             if not match:
-                logger.debug(f"No addtoken pattern found for AppID {app_id}")
+                logger.debug(f"No app token pattern found for AppID {app_id}")
                 return None
 
             app_token = match.group(1)
@@ -215,7 +214,7 @@ class ProcessZipTask:
             logger.error(f"Failed to load depots.ini: {e}", exc_info=True)
             known_depot_descriptions = {}
 
-        game_data = {}
+        game_data = {"source_zip_path": os.path.abspath(zip_path)}
         try:
             if not self._ensure_not_stopped():
                 return self._cancelled_result()
@@ -239,6 +238,7 @@ class ProcessZipTask:
                         game_data.setdefault("manifests", {})[parts[0]] = parts[1]
 
                 lua_content = zip_ref.read(lua_files[0]).decode("utf-8")
+                game_data["base_depot_ids"] = extract_base_depot_ids(lua_content)
 
                 if not self._ensure_not_stopped():
                     return self._cancelled_result()

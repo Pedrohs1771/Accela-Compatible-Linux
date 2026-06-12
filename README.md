@@ -47,12 +47,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
 ```
 
 ### Linux / Steam Deck (Terminal)
-Open your favorite terminal and paste this one-liner. It always resolves the latest Linux release from GitHub Releases, installs/updates LumaTools, and runs the repair pass for managed Steam appmanifests and SLSsteam entries:
+Open your favorite terminal and paste this one-liner to install the current ready version from the `main` branch. This is the recommended command when you want the newest committed LumaTools build:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --from-main --fix-all
+```
+
+Alternative using `wget`:
+```bash
+wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --from-main --fix-all
+```
+
+Stable release channel. This resolves the latest Linux package from GitHub Releases, installs/updates LumaTools, and runs the repair pass for managed Steam appmanifests and SLSsteam entries:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --fix-all
 ```
 
-Alternative using `wget`:
+Stable release alternative using `wget`:
 ```bash
 wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --fix-all
 ```
@@ -68,6 +78,19 @@ Repair an existing installation:
 ```bash
 lumatools --fix-all
 ```
+
+### Linux Steam Modes
+
+| Steam installation | LumaTools | SLSsteam |
+| --- | --- | --- |
+| Native package | Supported | Supported with ELF compatibility validation |
+| Flatpak | Supported | Supported through the official Flatpak override and shared-library guard |
+| Snap | Supported for library detection and clean Steam launch | Not currently supported by the official SLSsteam installer |
+
+When more than one Steam package is installed, LumaTools prioritizes the
+instance that is currently running. The clean fallback removes inherited
+`LD_AUDIT`, `LD_PRELOAD`, and `SHARED_LIBRARY_GUARD` values to prevent
+`ELFCLASS32`/`ELFCLASS64` startup failures.
 
 ### Release Assets
 

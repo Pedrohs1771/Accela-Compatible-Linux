@@ -1373,7 +1373,7 @@ class GameLibraryDialog(QDialog):
         local_path = None
         if status != "update_available":
             fpath = (
-                get_base_path() / "morrenus_manifests" / f"lumatools_fetch_{app_id}.zip"
+                get_base_path() / "hubcap_manifests" / f"lumatools_fetch_{app_id}.zip"
             )
             if fpath.exists():
                 local_path = str(fpath)

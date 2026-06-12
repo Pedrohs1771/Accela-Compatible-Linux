@@ -275,13 +275,15 @@ detect_os() {
 detect_steam_mode() {
     STEAM_MODE="Ausente"
 
-    if need_cmd flatpak && flatpak info com.valvesoftware.Steam >/dev/null 2>&1; then
-        STEAM_MODE="Flatpak"
+    local running_mode=""
+    running_mode="$(detect_running_steam_mode || true)"
+    if [ -n "$running_mode" ]; then
+        STEAM_MODE="$running_mode"
         return
     fi
 
-    if [ -d "$HOME/.local/share/flatpak/app/com.valvesoftware.Steam" ]; then
-        STEAM_MODE="Flatpak"
+    if [ -d "$HOME/.local/share/Steam/steamapps" ] || [ -d "$HOME/.steam/steam/steamapps" ] || [ -d "$HOME/.steam/root/steamapps" ] || [ -d "$HOME/.steam/debian-installation/steamapps" ]; then
+        STEAM_MODE="Nativa"
         return
     fi
 
@@ -290,8 +292,10 @@ detect_steam_mode() {
         return
     fi
 
-    if need_cmd snap && snap list steam >/dev/null 2>&1; then
-        STEAM_MODE="Snap"
+    if [ -d "$HOME/.local/share/flatpak/app/com.valvesoftware.Steam" ] || {
+        need_cmd flatpak && flatpak info com.valvesoftware.Steam >/dev/null 2>&1;
+    }; then
+        STEAM_MODE="Flatpak"
         return
     fi
 
@@ -300,10 +304,60 @@ detect_steam_mode() {
         return
     fi
 
-    if [ -d "$HOME/.local/share/Steam" ] || [ -d "$HOME/.steam/steam" ] || [ -d "$HOME/.steam/root" ] || [ -d "$HOME/.steam/debian-installation" ] || need_cmd steam; then
+    if need_cmd snap && snap list steam >/dev/null 2>&1; then
+        STEAM_MODE="Snap"
+        return
+    fi
+
+    if need_cmd steam; then
         STEAM_MODE="Nativa"
         return
     fi
+}
+
+detect_running_steam_mode() {
+    need_cmd ps || return 1
+
+    local command_name command_line
+    local native_found=false
+    local snap_found=false
+
+    while read -r command_name command_line; do
+        case "$command_name" in
+            flatpak)
+                if printf '%s' "$command_line" | grep -Fq 'com.valvesoftware.Steam'; then
+                    printf '%s\n' "Flatpak"
+                    return 0
+                fi
+                ;;
+            snap)
+                if printf '%s' "$command_line" | grep -Eq '(^|[[:space:]])(run[[:space:]]+)?steam([[:space:]]|$)'; then
+                    snap_found=true
+                fi
+                ;;
+            steam|steam.sh|steamwebhelper|steam-runtime-launcher-service|srt-bwrap|pv-adverb)
+                if printf '%s' "$command_line" | grep -Fq '/.var/app/com.valvesoftware.Steam/'; then
+                    printf '%s\n' "Flatpak"
+                    return 0
+                fi
+                if printf '%s' "$command_line" | grep -Fq '/snap/steam/'; then
+                    snap_found=true
+                else
+                    native_found=true
+                fi
+                ;;
+        esac
+    done < <(ps -eo comm=,args= 2>/dev/null)
+
+    if [ "$snap_found" = true ]; then
+        printf '%s\n' "Snap"
+        return 0
+    fi
+    if [ "$native_found" = true ]; then
+        printf '%s\n' "Nativa"
+        return 0
+    fi
+    return 1
 }
 
 detect_gpu() {
@@ -1177,6 +1231,55 @@ PY
     printf '%s\n' "$req_hash" > "$hash_file"
 }
 
+verify_runtime_requirements() {
+    local venv_python="$DEST_DIR/squashfs-root/bin/.venv/bin/python"
+    local failures=()
+
+    if [ "$DRY_RUN" = true ]; then
+        log "Dry-run: validaria dependências e módulos do runtime."
+        return
+    fi
+
+    [ -x "$venv_python" ] || failures+=("ambiente Python virtual")
+    if [ -x "$venv_python" ]; then
+        "$venv_python" - <<'PY' >/dev/null 2>&1 || failures+=("módulos Python")
+import importlib
+
+for module in (
+    "PyQt6",
+    "PIL",
+    "numpy",
+    "psutil",
+    "requests",
+    "bs4",
+    "cachetools",
+    "httpx",
+    "yaml",
+    "ruamel.yaml",
+    "steam",
+):
+    importlib.import_module(module)
+PY
+    fi
+
+    need_cmd 7z || failures+=("7z/p7zip")
+    if ! need_cmd unrar && ! need_cmd unar && ! need_cmd bsdtar && ! need_cmd 7z; then
+        failures+=("extrator RAR/arquivo")
+    fi
+    need_cmd rsync || failures+=("rsync")
+    if ! need_cmd curl && ! need_cmd wget; then
+        failures+=("curl ou wget")
+    fi
+    need_cmd openssl || failures+=("openssl")
+    has_dotnet_9 || failures+=(".NET Runtime 9")
+
+    if [ "${#failures[@]}" -gt 0 ]; then
+        die "Instalação incompleta. Dependências ausentes: $(join_by ', ' "${failures[@]}")."
+    fi
+
+    log "Runtime validado: dependências nativas e Python estão prontas."
+}
+
 install_slssteam() {
     if [ "$MODE" = "portable" ] && [ "$STEAM_MODE" = "Ausente" ]; then
         warn "Steam não detectada; pulando SLSsteam no modo portátil."
@@ -1185,6 +1288,11 @@ install_slssteam() {
 
     if [ "$DRY_RUN" = true ]; then
         log "Dry-run: verificaria/instalaria o SLSsteam."
+        return
+    fi
+
+    if [ "$STEAM_MODE" = "Snap" ]; then
+        warn "O instalador oficial do SLSsteam não suporta Steam Snap; mantendo a Steam sem LD_AUDIT."
         return
     fi
 
@@ -1248,6 +1356,7 @@ PY
 
     if [ -n "$latest_version" ] && [ -f "$version_file" ] && [ "$(cat "$version_file")" = "$latest_version" ]; then
         log "SLSsteam já está atualizado em $latest_version."
+        rm -rf "$tmp_dir"
         return
     fi
 
@@ -1277,6 +1386,7 @@ PY
         mkdir -p "$(dirname "$version_file")"
         printf '%s\n' "$latest_version" > "$version_file"
     fi
+    rm -rf "$tmp_dir"
 }
 
 install_launchers() {
@@ -1397,6 +1507,7 @@ run_installation() {
     install_dotnet_9_local
     sync_tree
     setup_python_env
+    verify_runtime_requirements
     install_slssteam || warn "Falha ao instalar SLSsteam automaticamente."
     install_slscheevo || warn "Falha ao instalar SLScheevo automaticamente."
     install_launchers
@@ -1408,7 +1519,10 @@ run_installation() {
 
     if [ "$FIX_ALL" = true ] && [ "$DRY_RUN" != true ]; then
         repair_existing_lumatools_state
-        run_self_test
+    fi
+
+    if [ "$DRY_RUN" != true ]; then
+        run_self_test || die "A instalação terminou, mas o autoteste encontrou falhas."
     fi
 }
 

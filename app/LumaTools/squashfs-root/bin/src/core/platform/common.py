@@ -10,6 +10,40 @@ def normalize_path(path: str | os.PathLike[str]) -> str:
     return os.path.realpath(os.path.normpath(os.fspath(path)))
 
 
+def resolve_steam_library_path(
+    path: str | os.PathLike[str],
+    library_paths: list[str] | tuple[str, ...] = (),
+) -> str:
+    """Return the Steam library root represented by a user-selected path.
+
+    Steam users commonly select either the library root, ``steamapps`` or
+    ``steamapps/common`` in a folder picker. All three must resolve to the
+    same root because download code appends ``steamapps/common`` itself.
+    """
+    candidate = Path(normalize_path(Path(path).expanduser()))
+    normalized_libraries = [
+        Path(normalize_path(Path(library).expanduser()))
+        for library in library_paths
+        if library
+    ]
+
+    for library in normalized_libraries:
+        common_dir = library / "steamapps" / "common"
+        if candidate in {library, library / "steamapps", common_dir}:
+            return str(library)
+        try:
+            candidate.relative_to(common_dir)
+        except ValueError:
+            continue
+        return str(library)
+
+    if candidate.name.lower() == "common" and candidate.parent.name.lower() == "steamapps":
+        return str(candidate.parent.parent)
+    if candidate.name.lower() == "steamapps":
+        return str(candidate.parent)
+    return str(candidate)
+
+
 def parse_libraryfolders_vdf(vdf_path: str | os.PathLike[str]) -> list[str]:
     libraries: list[str] = []
     try:

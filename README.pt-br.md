@@ -47,12 +47,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
 ```
 
 ### Linux / Steam Deck (Terminal)
-Abra seu terminal favorito e cole este comando de uma linha. Ele sempre resolve a release Linux mais recente no GitHub Releases, instala/atualiza o LumaTools e roda o reparo dos appmanifests Steam gerenciados e das entradas SLSsteam:
+Abra seu terminal favorito e cole este comando de uma linha para instalar a versão atual pronta do branch `main`. Este é o comando recomendado quando você quer o LumaTools mais novo já commitado:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --from-main --fix-all
+```
+
+Alternativa usando `wget`:
+```bash
+wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --from-main --fix-all
+```
+
+Canal estável por release. Este comando resolve a release Linux mais recente no GitHub Releases, instala/atualiza o LumaTools e roda o reparo dos appmanifests Steam gerenciados e das entradas SLSsteam:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --fix-all
 ```
 
-Alternativa usando `wget`:
+Alternativa estável usando `wget`:
 ```bash
 wget -qO- https://raw.githubusercontent.com/Pedrohs1771/Luma-Tools/main/bootstrap.sh | bash -s -- --fix-all
 ```
@@ -68,6 +78,19 @@ Reparar uma instalação existente:
 ```bash
 lumatools --fix-all
 ```
+
+### Modos da Steam no Linux
+
+| Instalação da Steam | LumaTools | SLSsteam |
+| --- | --- | --- |
+| Pacote nativo | Suportado | Suportado com validação de compatibilidade ELF |
+| Flatpak | Suportado | Suportado pelo override Flatpak oficial e pelo shared-library guard |
+| Snap | Suportado para detectar bibliotecas e abrir a Steam de forma limpa | Ainda não suportado pelo instalador oficial do SLSsteam |
+
+Quando há mais de uma Steam instalada, o LumaTools prioriza a instância que
+está em execução. O fallback limpo remove valores herdados de `LD_AUDIT`,
+`LD_PRELOAD` e `SHARED_LIBRARY_GUARD` para evitar falhas de inicialização
+`ELFCLASS32`/`ELFCLASS64`.
 
 ### Assets da Release
 

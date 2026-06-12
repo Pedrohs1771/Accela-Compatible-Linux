@@ -1,6 +1,7 @@
 import os
 import random
 import logging
+from pathlib import Path
 from typing import cast
 from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtGui import QMovie, QFont
@@ -15,10 +16,42 @@ from PyQt6.QtWidgets import (
     QFrame,
 )
 
+from core.visual_presets import get_visual_preset
 from utils.helpers import get_base_path
 from utils.paths import Paths
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_DOWNLOAD_GIF_PATTERN = "downloading_default*.gif"
+DEFAULT_DOWNLOAD_GIF_PREFIX = "downloading_default"
+
+
+def resolve_default_download_gifs(
+    colored_dir: Path, resource_dir: Path
+) -> list[str]:
+    colorized_defaults = sorted(colored_dir.glob(DEFAULT_DOWNLOAD_GIF_PATTERN))
+    resource_defaults = sorted(resource_dir.glob(DEFAULT_DOWNLOAD_GIF_PATTERN))
+    return [str(path) for path in (colorized_defaults or resource_defaults)]
+
+
+def resolve_visual_preset_gif_dir(settings) -> Path:
+    preset = get_visual_preset(settings.value("visual_preset", "hellgirl", type=str))
+    if preset.gif_dir.exists():
+        return preset.gif_dir
+    return Paths.resource("gif")
+
+
+def colorized_cache_matches_visual_preset(settings, colored_dir: Path) -> bool:
+    current = get_visual_preset(
+        settings.value("visual_preset", "hellgirl", type=str)
+    ).key
+    marker = colored_dir / "active_visual_preset.txt"
+    if not marker.exists():
+        return current == "hellgirl"
+    try:
+        return marker.read_text(encoding="utf-8").strip() == current
+    except OSError:
+        return False
 
 
 class UIStateManager:
@@ -74,15 +107,19 @@ class UIStateManager:
         self.download_gifs = []
         for pattern in custom_patterns:
             for p in colored_dir.glob(pattern):
-                # Exclude default GIFs
-                if "downloading_lain" not in p.name:
+                if not p.name.lower().startswith(DEFAULT_DOWNLOAD_GIF_PREFIX):
                     self.download_gifs.append(str(p))
 
         # Default downloading GIFs
-        self.default_download_gifs = []
-        default_dir = get_base_path() / "gifs/colorized"
-        for p in default_dir.glob("downloading_lain*.gif"):
-            self.default_download_gifs.append(str(p))
+        default_colored_dir = (
+            colored_dir
+            if colorized_cache_matches_visual_preset(self.settings, colored_dir)
+            else Path()
+        )
+        self.default_download_gifs = resolve_default_download_gifs(
+            default_colored_dir,
+            resolve_visual_preset_gif_dir(self.settings),
+        )
 
         # Sort both lists
         self.download_gifs.sort()
@@ -112,10 +149,10 @@ class UIStateManager:
         if colorized_dir.exists() and colorized_dir.is_dir():
             removed_count = 0
             for file_path in colorized_dir.rglob("downloading*.gif"):
-                # EXCLUDE downloading_lain*.gif and downloading_custom*.gif
+                # Preserve bundled defaults and user-provided custom GIFs.
                 filename_lower = file_path.name.lower()
                 if (
-                    "downloading_lain" in filename_lower
+                    filename_lower.startswith(DEFAULT_DOWNLOAD_GIF_PREFIX)
                     or "downloading_custom" in filename_lower
                 ):
                     continue
@@ -139,11 +176,14 @@ class UIStateManager:
         custom_dir = gifs_base / "custom"
 
         if custom_dir.exists() and custom_dir.is_dir():
-            # Find all generic downloading*.gif files (exclude _custom and _lain)
+            # Find generic downloading*.gif files, excluding known slots.
             files_to_rename = []
             for file_path in custom_dir.rglob("downloading*.gif"):
                 filename_lower = file_path.name.lower()
-                if "_custom" not in filename_lower and "_lain" not in filename_lower:
+                if (
+                    "_custom" not in filename_lower
+                    and not filename_lower.startswith(DEFAULT_DOWNLOAD_GIF_PREFIX)
+                ):
                     files_to_rename.append(file_path)
 
             if files_to_rename:
@@ -227,8 +267,12 @@ class UIStateManager:
         """Reload movie objects with current GIFs"""
         if not hasattr(self.main_window, "drop_zone_gif"):
             return
-        main_gif_path = get_base_path() / "gifs/colorized/main.gif"
-        default_gif_path = Paths.resource("gif/main.gif")
+        colored_dir = get_base_path() / "gifs/colorized"
+        main_gif_path = colored_dir / "main.gif"
+        preset_gif_dir = resolve_visual_preset_gif_dir(self.settings)
+        default_gif_path = preset_gif_dir / "main.gif"
+        if not default_gif_path.exists():
+            default_gif_path = Paths.resource("gif/main.gif")
 
         ui_mode = self.settings.value("ui_mode", "default")
         sonic_main_applied = False
@@ -247,7 +291,11 @@ class UIStateManager:
         self.main_window.drop_zone_gif.setMovie(self.main_movie)
         self.current_movie = self.main_movie
 
-        if main_gif_path.exists() and not sonic_main_applied:
+        if (
+            main_gif_path.exists()
+            and not sonic_main_applied
+            and colorized_cache_matches_visual_preset(self.settings, colored_dir)
+        ):
             self.main_movie.stop()
             self.main_movie = QMovie(str(main_gif_path))
             self._apply_movie_size(self.main_movie)
@@ -255,13 +303,11 @@ class UIStateManager:
             self.main_movie.start()
             self.current_movie = self.main_movie
 
-        if (
-            self.main_window.task_manager.current_job
-            or self.main_window.task_manager.current_job
-        ):
+        if self.main_window.task_manager.current_job:
             self.switch_to_download_gif()
 
     def reload_movies(self):
+        self._initialize_gifs()
         self._reload_movies()
 
     def setup_queue_panel(self):
@@ -476,12 +522,10 @@ class UIStateManager:
                 [str(p) for p in colored_dir.glob("downloading_custom*.gif")]
             )
 
-            # Filter out default GIFs (if they exist in the custom directory)
-            default_names = ["downloading_lain"]
             available_gifs = [
                 gif
                 for gif in custom_gifs
-                if not any(name in gif for name in default_names)
+                if not Path(gif).name.lower().startswith(DEFAULT_DOWNLOAD_GIF_PREFIX)
             ]
 
             # If no custom GIFs found, fall back to defaults
@@ -491,6 +535,16 @@ class UIStateManager:
         else:
             # Use only default GIFs
             available_gifs = self.default_download_gifs
+
+        if not available_gifs and ui_mode != "sonic":
+            available_gifs = resolve_default_download_gifs(
+                colored_dir,
+                resolve_visual_preset_gif_dir(self.settings),
+            )
+            if available_gifs:
+                logger.warning(
+                    "Colorized download GIFs are not ready; using preset defaults"
+                )
 
         # Make sure we have GIFs to use
         if not available_gifs:

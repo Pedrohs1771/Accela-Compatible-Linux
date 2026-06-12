@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.visual_presets import get_visual_preset
 from utils.helpers import get_base_path
 from utils.paths import Paths
 
@@ -97,6 +98,7 @@ class GIFManager:
         self.progress_dialog = None
         self._is_processing = False
         self._shutdown_requested = False
+        self._queued_process_request = None
 
     def _create_progress_dialog(self):
         """Create progress dialog without parent or with main window only if it's visible"""
@@ -113,7 +115,9 @@ class GIFManager:
         Process all GIFs from multiple input directories in parallel
         """
         if self._is_processing:
-            logger.warning("GIF processing already in progress, ignoring request.")
+            logger.info("GIF processing already in progress; queueing latest request.")
+            self._queued_process_request = (Path(output_dir), accent_color, silent)
+            self.regenerate_anyway = True
             return
 
         self._is_processing = True
@@ -125,14 +129,24 @@ class GIFManager:
             # Clean up old hex files and non-standard colorized files
             self._cleanup_old_files(output_dir)
 
-            # Find all unique GIFs across input directories (first found wins)
-            input_dirs = [get_base_path() / "gifs" / "custom", Paths.resource("gif")]
+            # Find all unique GIFs across input directories (first found wins).
+            # Custom GIFs override the selected visual preset, and the bundled
+            # Hell Girl defaults remain the final fallback.
+            preset = get_visual_preset(
+                self.settings.value("visual_preset", "hellgirl", type=str)
+            )
+            input_dirs = [get_base_path() / "gifs" / "custom"]
+            if preset.gif_dir.exists():
+                input_dirs.append(preset.gif_dir)
+            fallback_dir = Paths.resource("gif")
+            if fallback_dir not in input_dirs:
+                input_dirs.append(fallback_dir)
 
             gif_list = self._find_unique_gifs(input_dirs)
 
             if not gif_list:
                 logger.warning("No GIF files found in any input directory")
-                self._is_processing = False
+                self._finish_processing()
                 return
 
             logger.info(
@@ -160,7 +174,7 @@ class GIFManager:
             if not regeneration_needed:
                 logger.info("All GIFs are up to date, updating symlinks only.")
                 self._update_color_symlinks(gif_list, color_subdir, output_dir)
-                self._is_processing = False
+                self._finish_processing()
                 return
 
             # pt.r stop being stupid, it continues if regeneration_needed is false here
@@ -180,7 +194,17 @@ class GIFManager:
                 )
         except Exception as e:
             logger.error(f"Error starting GIF processing: {e}")
-            self._is_processing = False
+            self._finish_processing()
+
+    def _finish_processing(self):
+        self._is_processing = False
+        self._shutdown_requested = False
+        queued = self._queued_process_request
+        self._queued_process_request = None
+        if queued:
+            logger.info("Running queued GIF processing request.")
+            output_dir, accent_color, silent = queued
+            self.process_gif_batch(output_dir, accent_color, silent=silent)
 
     def _process_silently(
         self, gif_list, input_dirs, color_subdir, output_dir, accent_color
@@ -213,8 +237,7 @@ class GIFManager:
         except Exception as e:
             logger.error(f"Error during silent GIF processing: {e}")
         finally:
-            self._is_processing = False
-            self._shutdown_requested = False
+            self._finish_processing()
 
     def _process_with_progress(
         self, gif_list, input_dirs, color_subdir, output_dir, accent_color
@@ -272,8 +295,7 @@ class GIFManager:
                 progress_dialog.accept()
             if self.progress_dialog is progress_dialog:
                 self.progress_dialog = None
-            self._is_processing = False
-            self._shutdown_requested = False
+            self._finish_processing()
 
     def _process_gifs_parallel_with_progress(
         self,
@@ -951,6 +973,9 @@ class GIFManager:
         """Update all symlinks to point to current colorized versions"""
         logger.info("Updating symlinks to current color...")
         successful_links = 0
+        preset_key = get_visual_preset(
+            self.settings.value("visual_preset", "hellgirl", type=str)
+        ).key
 
         for gif_name in gif_list:
             colorized_path = color_subdir / gif_name
@@ -978,6 +1003,13 @@ class GIFManager:
         logger.info(
             f"Update complete: {successful_links}/{len(gif_list)} links/copies created"
         )
+        try:
+            (output_dir / "active_visual_preset.txt").write_text(
+                preset_key,
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.debug("Could not update GIF preset marker: %s", exc)
 
     @staticmethod
     def _create_color_symlink(symlink_path, target_path):

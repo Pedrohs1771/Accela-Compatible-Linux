@@ -186,7 +186,7 @@ def main():
     # People only have substance within the memories of other people.
 
     app = QApplication(sys.argv)
-    app.setApplicationName("lumatools")
+    app.setApplicationName("LumaTools")
     app.setApplicationDisplayName("LumaTools")
     if hasattr(app, "setDesktopFileName"):
         app.setDesktopFileName("lumatools")

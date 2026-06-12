@@ -108,9 +108,25 @@ class SteamManifestRepairTests(unittest.TestCase):
 
             self.assertEqual(result["repaired"], ["777"])
             self.assertEqual(result["decryption_key_blocked"], ["777"])
+            self.assertIn('"StateFlags"\t\t"4"', manifest.read_text(encoding="utf-8"))
             self.assertIn(
                 "Missing decryption key",
                 detect_recent_decryption_key_issue(library, "777"),
+            )
+
+    def test_detects_content_still_encrypted_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            logs = library / "logs"
+            logs.mkdir(parents=True)
+            (logs / "content_log.txt").write_text(
+                "[2026-06-09] AppID 888 update failed: Content still encrypted\n",
+                encoding="utf-8",
+            )
+
+            self.assertIn(
+                "Content still encrypted",
+                detect_recent_decryption_key_issue(library, "888"),
             )
 
     def test_onlinefix_windows_game_gets_proton_platform_override(self):

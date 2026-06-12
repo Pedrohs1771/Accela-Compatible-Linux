@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_SLUG="${LUMATOOLS_REPO:-Pedrohs1771/Luma-Tools}"
 WORK_DIR="${LUMATOOLS_BOOTSTRAP_DIR:-${XDG_DOWNLOAD_DIR:-$HOME/Downloads}/LumaTools-Install}"
 API_URL="https://api.github.com/repos/$REPO_SLUG/releases/latest"
+CHANNEL="${LUMATOOLS_CHANNEL:-release}"
+REF="${LUMATOOLS_REF:-main}"
 
 log() {
     printf '[LumaTools bootstrap] %s\n' "$1"
@@ -79,21 +81,50 @@ PY
 }
 
 main() {
+    local installer_args=()
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --from-main|--main|--source-main)
+                CHANNEL="main"
+                ;;
+            --latest-release|--release)
+                CHANNEL="release"
+                ;;
+            --ref)
+                REF="${2:-main}"
+                shift
+                ;;
+            --repo)
+                REPO_SLUG="${2:-Pedrohs1771/Luma-Tools}"
+                API_URL="https://api.github.com/repos/$REPO_SLUG/releases/latest"
+                shift
+                ;;
+            *)
+                installer_args+=("$1")
+                ;;
+        esac
+        shift
+    done
+
     mkdir -p "$WORK_DIR"
     rm -rf "$WORK_DIR/extract"
     mkdir -p "$WORK_DIR/extract"
 
     local releases_json archive asset_url install_dir
-    local installer_args=("$@")
     releases_json="$WORK_DIR/releases.json"
     archive="$WORK_DIR/LumaTools-Linux.zip"
 
-    log "Consultando a release mais recente em $REPO_SLUG..."
-    download_to_file "$API_URL" "$releases_json"
+    if [ "$CHANNEL" = "main" ]; then
+        asset_url="https://codeload.github.com/$REPO_SLUG/zip/$REF"
+        log "Baixando snapshot atual de $REPO_SLUG ($REF)..."
+    else
+        log "Consultando a release mais recente em $REPO_SLUG..."
+        download_to_file "$API_URL" "$releases_json"
 
-    asset_url="$(pick_asset_url "$releases_json" || true)"
-    if [ -z "$asset_url" ]; then
-        die "Não encontrei asset Linux .zip na release mais recente."
+        asset_url="$(pick_asset_url "$releases_json" || true)"
+        if [ -z "$asset_url" ]; then
+            die "Não encontrei asset Linux .zip na release mais recente."
+        fi
     fi
 
     log "Baixando pacote Linux completo..."

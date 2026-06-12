@@ -279,6 +279,12 @@ class JobQueueManager(QObject):
                             "SLSsteam incompatível",
                             "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam para evitar erro ELFCLASS.",
                         )
+                elif result == "SLSSTEAM_UNSUPPORTED":
+                    steam_helpers.start_steam_plain()
+                    self._show_slssteam_fallback_message(
+                        "Modo Steam sem suporte ao SLSsteam",
+                        "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam porque esse formato de instalação não é suportado pelo projeto oficial.",
+                    )
                 elif result == "SUCCESS":
                     logger.info("Steam started successfully with cached libraries.")
                 else:

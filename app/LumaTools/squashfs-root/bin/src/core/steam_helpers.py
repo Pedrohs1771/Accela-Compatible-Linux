@@ -10,11 +10,16 @@ from core.linux_paths import (
     detect_linux_steam_mode,
     find_primary_steam_root,
     find_slssteam_paths,
+    get_plain_steam_launch_command,
     get_steam_launch_command,
+    is_slssteam_supported,
     FLATPAK_APP_ID,
 )
 from core.platform import get_platform_backend
-from core.platform.common import parse_libraryfolders_vdf
+from core.platform.common import (
+    parse_libraryfolders_vdf,
+    resolve_steam_library_path as _resolve_steam_library_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +193,11 @@ def get_preferred_steam_library():
     return backend.get_preferred_steam_library()
 
 
+def resolve_steam_library_path(path, library_paths=None):
+    """Normalize a selected Steam path to its library root."""
+    return _resolve_steam_library_path(path, tuple(library_paths or ()))
+
+
 def kill_steam_process():
     global _slssteam_so_path_cache, _library_inject_so_path_cache
     _slssteam_so_path_cache = None
@@ -312,6 +322,13 @@ def start_steam():
                 logger.warning("Could not determine how to launch Steam on Linux.")
                 return "FAILED"
 
+            if not is_slssteam_supported(steam_mode):
+                logger.warning(
+                    "SLSsteam não é suportado pelo modo Steam %s; usando fallback limpo.",
+                    steam_mode,
+                )
+                return "SLSSTEAM_UNSUPPORTED"
+
             if steam_mode == "flatpak":
                 slssteam_path = _slssteam_so_path_cache
                 library_inject_path = _library_inject_so_path_cache
@@ -398,7 +415,7 @@ def start_steam_plain():
     if sys.platform == "win32":
         launch_command = get_platform_backend("win32").get_steam_launch_command()
     elif sys.platform == "linux":
-        launch_command = get_steam_launch_command(detect_linux_steam_mode())
+        launch_command = get_plain_steam_launch_command(detect_linux_steam_mode())
     else:
         launch_command = None
 
@@ -407,7 +424,10 @@ def start_steam_plain():
 
     try:
         logger.info("Starting Steam without SLSsteam injection: %s", " ".join(launch_command))
-        subprocess.Popen(launch_command)
+        clean_env = os.environ.copy()
+        for variable in ("LD_AUDIT", "LD_PRELOAD", "SHARED_LIBRARY_GUARD"):
+            clean_env.pop(variable, None)
+        subprocess.Popen(launch_command, env=clean_env)
         return "SUCCESS"
     except (OSError, subprocess.SubprocessError) as e:
         logger.error("Failed to start Steam without SLSsteam injection: %s", e, exc_info=True)

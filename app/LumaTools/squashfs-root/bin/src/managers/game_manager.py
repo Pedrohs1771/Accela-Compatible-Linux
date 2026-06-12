@@ -1,8 +1,10 @@
+import json
 import logging
 import os
 import sys
 import threading
 import re
+import zipfile
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QCoreApplication
@@ -520,10 +522,112 @@ class GameManager(QObject):
     @staticmethod
     def _get_lumatools_marker_path(game_path):
         """Return the LumaTools marker folder path for a game, if present."""
-        for marker_name in (".LumaTools", ".DepotDownloader"):
+        for marker_name in (
+            ".LumaTools",
+            ".DepotDownloader",
+            "LUMA_ONLINE_FIX_INFO.txt",
+            "LUMA_FIX_STACK.json",
+            "LUMA_RYUU_FIX_INFO.txt",
+        ):
             marker_path = os.path.join(game_path, marker_name)
             if os.path.exists(marker_path):
                 return marker_path
+        return None
+
+    @staticmethod
+    def _detect_appid_from_install(game_path):
+        """Best-effort AppID lookup for installs without a matching ACF."""
+        if not game_path or not os.path.isdir(game_path):
+            return None
+
+        metadata_names = {
+            "onlinefix.ini",
+            "steam_appid.txt",
+            "online_fix_profile.json",
+            "luma_fix_stack.json",
+        }
+        pruned_dirs = {
+            "assets",
+            "content",
+            "gi",
+            "locales",
+            "localization",
+            "managed",
+            "movies",
+            "paks",
+            "streamingassets",
+        }
+
+        def valid_appid(value):
+            text = str(value or "").strip()
+            return text if text.isdigit() and int(text) > 0 else None
+
+        for root, dirs, files in os.walk(game_path):
+            try:
+                depth = len(Path(root).relative_to(game_path).parts)
+            except ValueError:
+                depth = 0
+            if depth >= 6:
+                dirs[:] = []
+            else:
+                dirs[:] = [
+                    name
+                    for name in dirs
+                    if name.lower() not in pruned_dirs
+                    and not name.lower().endswith("_data")
+                ]
+
+            by_lower = {name.lower(): name for name in files}
+            onlinefix_name = by_lower.get("onlinefix.ini")
+            if onlinefix_name:
+                try:
+                    content = Path(root, onlinefix_name).read_text(
+                        encoding="utf-8-sig", errors="ignore"
+                    )
+                    match = re.search(
+                        r"^[ \t]*RealAppId[ \t]*=[ \t]*(\d+)[ \t]*$",
+                        content,
+                        flags=re.IGNORECASE | re.MULTILINE,
+                    )
+                    if match:
+                        return valid_appid(match.group(1))
+                except OSError:
+                    pass
+
+            steam_appid_name = by_lower.get("steam_appid.txt")
+            if steam_appid_name:
+                try:
+                    appid = valid_appid(
+                        Path(root, steam_appid_name).read_text(
+                            encoding="utf-8-sig", errors="ignore"
+                        )
+                    )
+                    if appid:
+                        return appid
+                except OSError:
+                    pass
+
+            for json_name in ("online_fix_profile.json", "luma_fix_stack.json"):
+                actual_name = by_lower.get(json_name)
+                if not actual_name:
+                    continue
+                try:
+                    payload = json.loads(
+                        Path(root, actual_name).read_text(
+                            encoding="utf-8-sig", errors="ignore"
+                        )
+                    )
+                except (OSError, ValueError, TypeError):
+                    continue
+                if isinstance(payload, dict):
+                    for key in ("appid", "app_id", "real_appid"):
+                        appid = valid_appid(payload.get(key))
+                        if appid:
+                            return appid
+
+            if not metadata_names.intersection(by_lower):
+                continue
+
         return None
 
     @staticmethod
@@ -567,7 +671,7 @@ class GameManager(QObject):
 
     def _sync_app_tokens_from_manifests(self):
         """
-        Check all ZIPs in morrenus_manifests for apptokens
+        Check all ZIPs in hubcap_manifests for apptokens
         and add any missing tokens to config.yaml.
         Called after game library scan completes.
         """
@@ -580,9 +684,9 @@ class GameManager(QObject):
             logger.debug("SLSsteam config.yaml unavailable, skipping token sync")
             return
 
-        manifests_dir = Path(get_base_path()) / "morrenus_manifests"
+        manifests_dir = Path(get_base_path()) / "hubcap_manifests"
         if not manifests_dir.exists():
-            logger.debug("morrenus_manifests directory not found")
+            logger.debug("hubcap_manifests directory not found")
             return
 
         # Get existing tokens from config
@@ -619,11 +723,12 @@ class GameManager(QObject):
 
                         lua_content = zip_ref.read(lua_files[0]).decode("utf-8")
 
-                        # Extract token using the same pattern as ProcessZipTask
-                        token_pattern = r'addtoken\s*\(\s*\d+\s*,\s*"([^"]+)"\s*\)'
-                        token_match = re.search(
-                            token_pattern, lua_content, re.IGNORECASE
+                        token_pattern = (
+                            r'addtoken\s*\(\s*'
+                            + re.escape(app_id)
+                            + r'\s*,\s*"([^"]+)"\s*\)'
                         )
+                        token_match = re.search(token_pattern, lua_content, re.IGNORECASE)
 
                         if not token_match:
                             continue
@@ -645,13 +750,13 @@ class GameManager(QObject):
 
         except Exception as e:
             logger.error(
-                f"Error scanning morrenus_manifests for tokens: {e}", exc_info=True
+                f"Error scanning hubcap_manifests for tokens: {e}", exc_info=True
             )
             return
 
         if tokens_added > 0:
             logger.info(
-                f"Synced {tokens_added} missing AppToken(s) from morrenus_manifests"
+                f"Synced {tokens_added} missing AppToken(s) from hubcap_manifests"
             )
         if tokens_skipped > 0:
             logger.debug(f"Skipped {tokens_skipped} AppToken(s) that already exist")
@@ -682,11 +787,25 @@ class GameManager(QObject):
             if not appmanifest_path and not appid:
                 appmanifest_path, appid = self._parse_acf_for_appid(library_path, game_name)
 
+            if not appid:
+                appid = self._detect_appid_from_install(game_path)
+                if appid:
+                    logger.info(
+                        "Determined AppID %s for '%s' from installation metadata.",
+                        appid,
+                        game_name,
+                    )
+
             # Warn if AppID could not be determined
             if not appid:
-                logger.warning(
-                    f"FAILED to determine AppID for '{game_name}'. Game will have AppID='0' (unknown). This may happen if the ACF file's installdir doesn't match the folder name exactly."
+                message = (
+                    f"FAILED to determine AppID for '{game_name}'. "
+                    "Game will have AppID='0' (unknown)."
                 )
+                if is_lumatools_install:
+                    logger.warning(message)
+                else:
+                    logger.debug(message)
 
             # Initialize game data dictionary early so we can populate it
             # Determine install directory name
@@ -1510,7 +1629,7 @@ class GameManager(QObject):
         if not appid_str.isdigit():
             return []
 
-        manifests_dir = Path(get_base_path()) / "morrenus_manifests"
+        manifests_dir = Path(get_base_path()) / "hubcap_manifests"
         manifest_zip = manifests_dir / f"lumatools_fetch_{appid_str}.zip"
         if not manifest_zip.exists():
             return []

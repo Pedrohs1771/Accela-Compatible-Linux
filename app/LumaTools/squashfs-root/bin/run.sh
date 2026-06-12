@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-cd "$(dirname "$(realpath "$0")")"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -8,7 +9,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 set +eu
-IS_APPIMAGE=$APPIMAGE
+IS_APPIMAGE="${APPIMAGE:-}"
 
 # Check if notify-send exists globally
 command -v notify-send &> /dev/null
@@ -17,7 +18,7 @@ set -eu
 
 # Logging functions
 log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
+    printf '%b\n' "${GREEN}[INFO]${NC} $1"
     set +eu
     if [ "$NOTIFY_SEND_AVAILABLE" -eq 0 ]; then
         notify-send -t 5000 "INFO" "$1" 2>/dev/null
@@ -26,7 +27,7 @@ log_info() {
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    printf '%b\n' "${YELLOW}[WARN]${NC} $1"
     set +eu
     if [ "$NOTIFY_SEND_AVAILABLE" -eq 0 ]; then
         notify-send -t 5000 -u normal "WARNING" "$1" 2>/dev/null
@@ -35,7 +36,7 @@ log_warn() {
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    printf '%b\n' "${RED}[ERROR]${NC} $1"
     set +eu
     if [ "$NOTIFY_SEND_AVAILABLE" -eq 0 ]; then
         notify-send -t 5000 -u critical "ERROR" "$1" 2>/dev/null

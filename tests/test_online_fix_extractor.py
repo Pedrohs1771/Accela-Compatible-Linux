@@ -38,6 +38,23 @@ class OnlineFixExtractorTests(unittest.TestCase):
             self.assertIn("Caminho inseguro", message)
             self.assertFalse((tmp_path / "evil.txt").exists())
 
+    def test_normalizes_onlinefix_language_to_brazilian(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game_dir = Path(tmp)
+            ini_path = game_dir / "engine" / "OnlineFix.ini"
+            ini_path.parent.mkdir()
+            ini_path.write_bytes(
+                b"[Main]\r\nRealAppId=238370\r\nLanguage=russian\r\n"
+            )
+
+            updated = OnlineFixInjector._normalize_onlinefix_language(str(game_dir))
+
+            self.assertEqual(updated, [str(ini_path)])
+            content = ini_path.read_text(encoding="utf-8")
+            self.assertIn("Language=brazilian", content)
+            self.assertNotIn("Language=russian", content)
+            self.assertIn("RealAppId=238370", content)
+
 
 if __name__ == "__main__":
     unittest.main()
