@@ -1109,6 +1109,32 @@ class GameLibraryDialog(QDialog):
         )
         layout.addWidget(sl_btn)
 
+        # LumaSAM (Achievement Unlocker)
+        self.luma_sam_btn = QPushButton("Desbloquear Conquistas (LumaSAM)")
+        self.luma_sam_btn.setToolTip("Desbloqueia todas as conquistas do jogo no seu perfil público da Steam.")
+        layout.addWidget(self.luma_sam_btn)
+
+        def _on_lumasam_click():
+            self.luma_sam_btn.setText("Desbloqueando...")
+            self.luma_sam_btn.setEnabled(False)
+            
+            def _run_sam_bg():
+                try:
+                    from core.luma_sam import run_luma_sam
+                    # Will run sync inside this thread
+                    success = run_luma_sam(appid, path)
+                    if success:
+                        QMetaObject.invokeMethod(self, "_on_lumasam_success", Qt.ConnectionType.QueuedConnection)
+                    else:
+                        QMetaObject.invokeMethod(self, "_on_lumasam_error", Qt.ConnectionType.QueuedConnection, Q_ARG(str, "Falha ao desbloquear conquistas. O jogo possui libsteam_api.so? A Steam está aberta?"))
+                except Exception as e:
+                    QMetaObject.invokeMethod(self, "_on_lumasam_error", Qt.ConnectionType.QueuedConnection, Q_ARG(str, f"Erro: {str(e)}"))
+
+            self.executor.submit(_run_sam_bg)
+
+        self.luma_sam_btn.clicked.connect(_on_lumasam_click)
+
+
         # ACF Fix
         fix_btn = QPushButton("Corrigir instalação (remover .acf)")
         fix_btn.clicked.connect(lambda: self._fix_game_install(game_data))
@@ -1241,6 +1267,21 @@ class GameLibraryDialog(QDialog):
         self.of_btn.setText("Baixar Online Fix (Multiplayer)")
         self.of_btn.setEnabled(True)
         QMessageBox.warning(self, "Erro", msg)
+
+    @pyqtSlot()
+    def _on_lumasam_success(self):
+        if hasattr(self, "luma_sam_btn"):
+            self.luma_sam_btn.setText("Conquistas Desbloqueadas!")
+            self.luma_sam_btn.setEnabled(True)
+        QMessageBox.information(self, "Sucesso", "Todas as conquistas foram desbloqueadas com sucesso no seu perfil público da Steam!")
+
+    @pyqtSlot(str)
+    def _on_lumasam_error(self, msg: str):
+        if hasattr(self, "luma_sam_btn"):
+            self.luma_sam_btn.setText("Desbloquear Conquistas (LumaSAM)")
+            self.luma_sam_btn.setEnabled(True)
+        QMessageBox.warning(self, "Erro", msg)
+
 
     def _apply_ryuu_fix_for_game(self, game_data: dict) -> None:
         try:
@@ -1433,10 +1474,12 @@ class GameLibraryDialog(QDialog):
 
     def _submit_job(self, filepath: str, game_data: dict, dialog: QDialog) -> None:
         """Submit the job to the main window queue."""
+        install_path = str(game_data.get("install_path") or "").strip()
         metadata = {
             "appid": game_data.get("appid"),
             "library_path": game_data.get("library_path"),
-            "install_path": game_data.get("install_path"),
+            "install_path": install_path,
+            "install_dir": game_data.get("install_dir") or (Path(install_path).name if install_path else ""),
         }
         self.main_window.job_queue.add_job(filepath, metadata)
         dialog.accept()

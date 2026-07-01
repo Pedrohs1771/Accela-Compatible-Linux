@@ -200,6 +200,63 @@ class SteamPlainLaunchTests(unittest.TestCase):
         self.assertNotIn("LD_PRELOAD", launch_env)
         self.assertNotIn("SHARED_LIBRARY_GUARD", launch_env)
 
+    def test_slssteam_launch_uses_steam_launcher_and_verifies_loaded(self):
+        _ensure_psutil_stub()
+        from core import steam_helpers
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            slssteam = root / "SLSsteam.so"
+            library_inject = root / "library-inject.so"
+            steam_launcher = root / "bin" / "steam"
+            steam_launcher.parent.mkdir(parents=True)
+            for path in (slssteam, library_inject):
+                path.write_bytes(b"\x7fELF\x01")
+                path.chmod(0o755)
+            steam_launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            steam_launcher.chmod(0o755)
+            launched_process = mock.Mock()
+
+            with (
+                mock.patch.object(steam_helpers.sys, "platform", "linux"),
+                mock.patch.object(steam_helpers, "_elf_class", return_value=32),
+                mock.patch.object(steam_helpers, "_valid_ld_audit_pair", return_value=True),
+                mock.patch.object(
+                    steam_helpers,
+                    "_slssteam_launch_command",
+                    return_value=[str(steam_launcher)],
+                ),
+                mock.patch.object(
+                    steam_helpers,
+                    "_wait_for_slssteam_launch",
+                    return_value="SUCCESS",
+                ) as wait_for_launch,
+                mock.patch.object(
+                    steam_helpers.subprocess,
+                    "Popen",
+                    return_value=launched_process,
+                ) as popen,
+            ):
+                result = steam_helpers.start_steam_with_slssteam(
+                    str(slssteam),
+                    str(library_inject),
+                    launch_command=["steam"],
+                    expected_class=32,
+                )
+
+            self.assertEqual(result, "SUCCESS")
+            self.assertEqual(popen.call_args.args[0], [str(steam_launcher)])
+            self.assertEqual(
+                popen.call_args.kwargs["env"]["LD_AUDIT"],
+                f"{library_inject}:{slssteam}",
+            )
+            wait_for_launch.assert_called_once_with(
+                str(slssteam),
+                str(library_inject),
+                launched_process,
+                timeout_seconds=15.0,
+            )
+
 
 class LinuxBackendLibraryTests(unittest.TestCase):
     def test_detects_library_on_another_mounted_drive(self):
@@ -264,6 +321,19 @@ class LinuxBackendLibraryTests(unittest.TestCase):
             self.assertEqual(
                 resolve_steam_library_path(destination, []),
                 str(destination.resolve()),
+            )
+
+    def test_normalizes_game_folder_to_library_root_even_without_known_libraries(self):
+        from core.platform.common import resolve_steam_library_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            library = Path(tmpdir) / "mnt" / "games" / "SteamLibrary"
+            game_dir = library / "steamapps" / "common" / "Terraria"
+            game_dir.mkdir(parents=True)
+
+            self.assertEqual(
+                resolve_steam_library_path(game_dir, []),
+                str(library.resolve()),
             )
 
 
@@ -360,6 +430,7 @@ class SLSsteamAppTokenTests(unittest.TestCase):
                         "AdditionalApps:",
                         "  - 238370",
                         "AppTokens:",
+                        '  1017510: "DLC 1017510"',
                         "  993090: 6308073361085917231",
                         "  238370: 475965f6a77dd6b37085519e3195eab3b947b3cefa6f9ee0172ad9cec0042db1",
                         "  204360: 14285758721387452983",
@@ -381,6 +452,7 @@ class SLSsteamAppTokenTests(unittest.TestCase):
             content = config_path.read_text(encoding="utf-8")
             self.assertIn("  993090: 6308073361085917231", content)
             self.assertIn("  204360: 14285758721387452983", content)
+            self.assertNotIn("DLC 1017510", content)
             self.assertNotIn("475965f6a77dd6b", content)
 
 

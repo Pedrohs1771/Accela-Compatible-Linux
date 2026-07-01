@@ -248,7 +248,7 @@ def main():
             cli_mode = True
         elif arg == "--start-hidden":
             start_hidden = True
-        elif arg == "--appid" and i + 1 < len(args):
+        elif arg in ("--appid", "--add-game") and i + 1 < len(args):
             appid_str = args[i + 1]
             if appid_str.isdigit():
                 command_line_appid = int(appid_str)

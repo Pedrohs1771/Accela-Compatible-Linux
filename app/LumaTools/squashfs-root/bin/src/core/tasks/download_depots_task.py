@@ -13,6 +13,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 # Local imports
 from utils.helpers import resource_path, ensure_dotnet_availability, get_dotnet_path
 from utils.settings import get_settings
+from utils.steam_manifest import get_game_directory
 
 # Third-party imports
 try:
@@ -400,18 +401,7 @@ class DownloadDepotsTask(QObject):
                 if depot_id in game_data["depots"]:
                     f.write(f"{depot_id};{game_data['depots'][depot_id]['key']}\n")
 
-        safe_game_name_fallback = (
-            re.sub(r"[^\w\s-]", "", game_data.get("game_name", ""))
-            .strip()
-            .replace(" ", "_")
-        )
-        install_folder_name = game_data.get("installdir", safe_game_name_fallback)
-        if not install_folder_name:
-            install_folder_name = f"App_{game_data['appid']}"
-
-        download_dir = os.path.join(
-            dest_path, "steamapps", "common", install_folder_name
-        )
+        download_dir = get_game_directory(dest_path, game_data)
         os.makedirs(download_dir, exist_ok=True)
         self.progress.emit(f"Download destination set to: {download_dir}")
 

@@ -583,7 +583,7 @@ def _sanitize_app_tokens(content: str) -> Tuple[str, bool]:
 
     changed = False
     sanitized_lines: list[str] = []
-    token_pattern = re.compile(r"^\s*(\d+)\s*:\s*([^#\s]+)(\s*#.*)?\s*$")
+    token_pattern = re.compile(r"^\s*(\d+)\s*:\s*(.*?)\s*$")
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -595,7 +595,10 @@ def _sanitize_app_tokens(content: str) -> Tuple[str, bool]:
             sanitized_lines.append(line)
             continue
 
-        app_id, token, comment = match.groups()
+        app_id, raw_value = match.groups()
+        token, separator, comment_text = raw_value.partition("#")
+        token = token.strip()
+        comment = f" #{comment_text.rstrip()}" if separator else ""
         if not _is_valid_app_token_value(token):
             logger.warning(
                 "Removed invalid AppToken for AppID %s; SLSsteam requires decimal uint64 tokens.",

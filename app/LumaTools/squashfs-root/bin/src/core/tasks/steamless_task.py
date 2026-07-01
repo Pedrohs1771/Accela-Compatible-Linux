@@ -491,6 +491,29 @@ class SteamlessIntegration(QObject):
                 return False
 
             # Exit code 0 - Steamless handles file operations internally
+            unpacked_path = None
+            if exe_path.lower().endswith(".exe"):
+                unpacked_path = exe_path[:-4] + ".unpacked.exe"
+            else:
+                unpacked_path = exe_path + ".unpacked"
+
+            if unpacked_path and os.path.exists(unpacked_path):
+                original_backup = exe_path + ".original.exe" if exe_path.lower().endswith(".exe") else exe_path + ".original"
+                try:
+                    if not os.path.exists(original_backup):
+                        os.rename(exe_path, original_backup)
+                        self.progress.emit(f"Criado backup do executavel original em: {os.path.basename(original_backup)}")
+                        logger.info(f"Backed up original executable to {original_backup}")
+                    else:
+                        os.remove(exe_path)
+                    os.rename(unpacked_path, exe_path)
+                    self.progress.emit(f"Substituido executavel original pelo arquivo desempacotado sem DRM!")
+                    logger.info(f"Successfully replaced {exe_path} with unpacked version.")
+                except Exception as e:
+                    logger.error(f"Failed to replace executable with unpacked version: {e}")
+                    self.error.emit(f"Failed to replace executable: {str(e)}")
+                    return False
+
             self.finished.emit(True)
             return True
 

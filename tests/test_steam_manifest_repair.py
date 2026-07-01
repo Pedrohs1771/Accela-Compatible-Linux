@@ -1,17 +1,28 @@
 import tempfile
+import importlib
 import sys
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from utils.steam_manifest import (
     detect_recent_decryption_key_issue,
     get_active_steam_owner,
+    repair_installed_app_state,
     repair_lumatools_library_manifests,
     write_acf_file,
+    generate_download_trigger_acf,
+    validate_acf_integrity,
 )
 
 
 class SteamManifestRepairTests(unittest.TestCase):
+    @staticmethod
+    def _ensure_psutil_stub():
+        if "psutil" not in sys.modules:
+            sys.modules["psutil"] = types.ModuleType("psutil")
+
     @staticmethod
     def _write_manifest(steamapps: Path, appid: str, name: str, installdir: str) -> Path:
         manifest = steamapps / f"appmanifest_{appid}.acf"
@@ -288,6 +299,172 @@ class SteamManifestRepairTests(unittest.TestCase):
             self.assertIsNotNone(acf_path)
             text = Path(acf_path).read_text(encoding="utf-8")
             self.assertIn('"LastOwner"\t\t"76561198000000002"', text)
+
+    def test_write_acf_uses_main_steam_owner_for_external_library(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            steam_root = root / "Steam"
+            library = root / "Games" / "SteamLibrary"
+            config = steam_root / "config"
+            config.mkdir(parents=True)
+            self._ensure_psutil_stub()
+            steam_helpers = importlib.import_module("core.steam_helpers")
+            (config / "loginusers.vdf").write_text(
+                '"users"\n'
+                "{\n"
+                '\t"76561198000000003"\n'
+                "\t{\n"
+                '\t\t"MostRecent"\t\t"1"\n'
+                "\t}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                steam_helpers, "find_steam_install", return_value=str(steam_root)
+            ):
+                acf_path = write_acf_file(
+                    str(library),
+                    {
+                        "appid": "999",
+                        "game_name": "Owner Test",
+                        "buildid": "1",
+                        "selected_depots_list": [],
+                        "manifests": {},
+                        "depots": {},
+                    },
+                    0,
+                    include_depots=False,
+                )
+
+            self.assertIsNotNone(acf_path)
+            text = Path(acf_path).read_text(encoding="utf-8")
+            self.assertIn('"LastOwner"\t\t"76561198000000003"', text)
+
+    def test_repair_uses_main_steam_owner_for_external_library(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            steam_root = root / "Steam"
+            library = root / "Games" / "SteamLibrary"
+            config = steam_root / "config"
+            steamapps = library / "steamapps"
+            game_dir = steamapps / "common" / "Owner Test"
+            config.mkdir(parents=True)
+            game_dir.mkdir(parents=True)
+            self._ensure_psutil_stub()
+            steam_helpers = importlib.import_module("core.steam_helpers")
+            (game_dir / ".LumaTools").write_text("", encoding="utf-8")
+            (config / "loginusers.vdf").write_text(
+                '"users"\n'
+                "{\n"
+                '\t"76561198000000004"\n'
+                "\t{\n"
+                '\t\t"MostRecent"\t\t"1"\n'
+                "\t}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            manifest = steamapps / "appmanifest_999.acf"
+            manifest.write_text(
+                '"AppState"\n'
+                "{\n"
+                '\t"appid"\t\t"999"\n'
+                '\t"name"\t\t"Owner Test"\n'
+                '\t"StateFlags"\t\t"6"\n'
+                '\t"installdir"\t\t"Owner Test"\n'
+                '\t"LastOwner"\t\t"0"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                steam_helpers, "find_steam_install", return_value=str(steam_root)
+            ):
+                self.assertTrue(repair_installed_app_state(str(library), "999"))
+
+            text = manifest.read_text(encoding="utf-8")
+            self.assertIn('"LastOwner"\t\t"76561198000000004"', text)
+
+    def test_generate_download_trigger_acf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            (library / "steamapps").mkdir(parents=True)
+            
+            game_data = {
+                "appid": "444",
+                "game_name": "Test Download Trigger",
+                "buildid": "0",
+                "selected_depots_list": [],
+                "manifests": {},
+                "depots": {},
+            }
+            
+            acf_path = generate_download_trigger_acf(
+                str(library), game_data, size_on_disk=0, include_depots=False
+            )
+            
+            self.assertIsNotNone(acf_path)
+            content = Path(acf_path).read_text(encoding="utf-8")
+            self.assertIn('"StateFlags"\t\t"1026"', content)
+            self.assertIn('"AutoUpdateBehavior"\t\t"0"', content)
+            self.assertIn('"AllowOtherDownloadsWhileRunning"\t\t"1"', content)
+
+    def test_validate_acf_integrity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            steamapps = library / "steamapps"
+            game_dir = steamapps / "common" / "Integrity Test"
+            game_dir.mkdir(parents=True)
+            
+            # 1. Missing file -> False
+            self.assertFalse(validate_acf_integrity(str(library), "555"))
+            
+            manifest = self._write_manifest(steamapps, "555", "Integrity Test", "Integrity Test")
+            
+            # 2. File exists, installdir exists, StateFlags=6 -> True (not fully installed, but consistent state)
+            self.assertTrue(validate_acf_integrity(str(library), "555"))
+            
+            # 3. Fully installed (4), but 0 size on disk and has files -> False
+            (game_dir / "file.bin").write_bytes(b"data")
+            manifest.write_text(
+                '"AppState"\n'
+                "{\n"
+                '\t"appid"\t\t"555"\n'
+                '\t"name"\t\t"Integrity Test"\n'
+                '\t"StateFlags"\t\t"4"\n'
+                '\t"installdir"\t\t"Integrity Test"\n'
+                '\t"SizeOnDisk"\t\t"0"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(validate_acf_integrity(str(library), "555"))
+            
+            # 4. Fully installed (4) with correct size -> True
+            manifest.write_text(
+                '"AppState"\n'
+                "{\n"
+                '\t"appid"\t\t"555"\n'
+                '\t"name"\t\t"Integrity Test"\n'
+                '\t"StateFlags"\t\t"4"\n'
+                '\t"installdir"\t\t"Integrity Test"\n'
+                '\t"SizeOnDisk"\t\t"4"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(validate_acf_integrity(str(library), "555"))
+            
+            # 5. Non-existent installdir -> False
+            manifest.write_text(
+                '"AppState"\n'
+                "{\n"
+                '\t"appid"\t\t"555"\n'
+                '\t"name"\t\t"Integrity Test"\n'
+                '\t"StateFlags"\t\t"4"\n'
+                '\t"installdir"\t\t"Does Not Exist"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(validate_acf_integrity(str(library), "555"))
 
 
 if __name__ == "__main__":

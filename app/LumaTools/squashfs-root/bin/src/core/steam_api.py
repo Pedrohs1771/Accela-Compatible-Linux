@@ -513,3 +513,25 @@ def get_manifest_id(appid, depot_id=None, use_cache=True):
             "depot_id": depot_id,
             "error": f"Unexpected error: {str(e)}",
         }
+
+def check_game_updates(app_id: str, local_buildid: str, access_token: str = None) -> dict:
+    """
+    Checks if there's a game update by comparing the local buildid with the Steam API's buildid.
+    Returns a dict with update status.
+    """
+    try:
+        app_data = get_depot_info_from_api(app_id, access_token)
+        if not app_data or not app_data.get("buildid"):
+            return {"status": "error", "message": "Failed to get remote buildid"}
+            
+        remote_buildid = str(app_data["buildid"])
+        local_buildid = str(local_buildid)
+        
+        if local_buildid == remote_buildid:
+            return {"status": "up_to_date", "local": local_buildid, "remote": remote_buildid}
+        else:
+            return {"status": "update_available", "local": local_buildid, "remote": remote_buildid}
+    except Exception as e:
+        logger.error(f"Error in check_game_updates for {app_id}: {e}")
+        return {"status": "error", "message": str(e)}
+

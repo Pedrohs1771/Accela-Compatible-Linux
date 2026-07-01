@@ -660,17 +660,7 @@ class ContentManagerDialog(QDialog):
         def worker():
             names: dict[str, str] = {}
             try:
-                response = requests.get(
-                    "https://store.steampowered.com/api/appdetails",
-                    params={"appids": ",".join(ids), "filters": "basic"},
-                    timeout=12,
-                    headers={"User-Agent": "Mozilla/5.0 LumaTools"},
-                )
-                response.raise_for_status()
-                payload = response.json()
-                for appid, data in payload.items():
-                    if data.get("success") and data.get("data", {}).get("name"):
-                        names[str(appid)] = str(data["data"]["name"])
+                names = self.content_manager.fetch_app_names(ids)
             except Exception:
                 logger.debug("DLC name lookup failed", exc_info=True)
             self.dlc_names_ready.emit(names)

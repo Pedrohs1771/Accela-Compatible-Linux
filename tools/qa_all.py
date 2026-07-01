@@ -61,7 +61,7 @@ def python_has_module(python_bin: str, module: str) -> bool:
 
 def ensure_gui_test_python() -> str:
     python_bin = qa_python()
-    if python_has_module(python_bin, "PyQt6"):
+    if python_has_module(python_bin, "PyQt6") and python_has_module(python_bin, "pytest"):
         return python_bin
 
     if not QA_VENV_DIR.exists():
@@ -69,9 +69,10 @@ def ensure_gui_test_python() -> str:
 
     venv_python = str(QA_VENV_DIR / "bin" / "python")
     venv_pip = str(QA_VENV_DIR / "bin" / "pip")
-    if not python_has_module(venv_python, "PyQt6"):
+    if not python_has_module(venv_python, "PyQt6") or not python_has_module(venv_python, "pytest"):
         ensure_ok(run([venv_pip, "install", "--upgrade", "pip", "setuptools", "wheel"]), "pip upgrade .qa-venv")
         ensure_ok(run([venv_pip, "install", "-r", str(REQUIREMENTS)]), "pip install .qa-venv")
+        ensure_ok(run([venv_pip, "install", "pytest"]), "pip install pytest in .qa-venv")
     return venv_python
 
 
@@ -112,7 +113,7 @@ def check_unit_tests() -> str:
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
     python_bin = ensure_gui_test_python()
     return ensure_ok(
-        run([python_bin, "-m", "unittest", "discover", "-s", str(ROOT / "tests"), "-v"], env=env),
+        run([python_bin, "-m", "pytest", str(ROOT / "tests"), "-v"], env=env),
         "unit tests",
     )
 

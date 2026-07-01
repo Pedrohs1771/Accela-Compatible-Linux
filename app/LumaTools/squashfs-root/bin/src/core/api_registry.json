@@ -1,0 +1,52 @@
+[
+    {
+        "name": "Morrenus",
+        "url": "https://hubcapmanifest.com/api/v1/manifest/<appid>?api_key=<moapikey>",
+        "status_url": "https://hubcapmanifest.com/api/v1/status/<appid>?api_key=<moapikey>",
+        "success_code": 200,
+        "requires_key": true,
+        "key_param": "moapikey",
+        "enabled": true,
+        "priority": 1
+    },
+    {
+        "name": "Ryuu",
+        "url": "http://167.235.229.108/<appid>",
+        "status_url": null,
+        "success_code": 200,
+        "requires_key": false,
+        "key_param": null,
+        "enabled": true,
+        "priority": 2
+    },
+    {
+        "name": "Sushi",
+        "url": "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip",
+        "status_url": null,
+        "success_code": 200,
+        "requires_key": false,
+        "key_param": null,
+        "enabled": true,
+        "priority": 3
+    },
+    {
+        "name": "OpenSteamTool",
+        "url": "https://api.opensteamtool.com/manifest/<appid>",
+        "status_url": null,
+        "success_code": 200,
+        "requires_key": false,
+        "key_param": null,
+        "enabled": true,
+        "priority": 4
+    },
+    {
+        "name": "steamrun",
+        "url": "https://api.steamrun.co/manifest/<appid>",
+        "status_url": null,
+        "success_code": 200,
+        "requires_key": false,
+        "key_param": null,
+        "enabled": true,
+        "priority": 5
+    }
+]

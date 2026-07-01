@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from core.platform.common import normalize_path
+
 
 _EMPTY_PLATFORM_CONFIG = '\t"UserConfig"\n\t{\n\t}\n\t"MountedConfig"\n\t{\n\t}'
 _WINDOWS_ON_LINUX_PLATFORM_CONFIG = (
@@ -35,15 +37,49 @@ def get_install_folder_name(game_data: Dict[str, Any]) -> str:
 
 
 def get_game_directory(dest_path: str, game_data: Dict[str, Any]) -> str:
+    install_path = str(game_data.get("install_path") or "").strip()
+    if install_path:
+        try:
+            candidate = Path(normalize_path(Path(install_path).expanduser()))
+            common_dir = Path(normalize_path(Path(dest_path).expanduser())) / "steamapps" / "common"
+            candidate.relative_to(common_dir)
+            return str(candidate)
+        except (OSError, ValueError):
+            pass
+
     return os.path.join(
         dest_path, "steamapps", "common", get_install_folder_name(game_data)
     )
 
 
-def get_active_steam_owner(steam_root: str | os.PathLike[str] | None) -> str:
+def _resolve_steam_root(
+    steam_root_or_library: str | os.PathLike[str] | None,
+) -> Path | None:
+    if not steam_root_or_library:
+        return None
+
+    candidate = Path(steam_root_or_library).expanduser()
+    if (candidate / "config" / "loginusers.vdf").is_file():
+        return candidate
+    if (candidate.parent / "config" / "loginusers.vdf").is_file():
+        return candidate.parent
+
+    try:
+        from core.steam_helpers import find_steam_install
+    except ImportError:
+        return candidate
+
+    steam_root = find_steam_install()
     if not steam_root:
+        return candidate
+    return Path(steam_root).expanduser()
+
+
+def get_active_steam_owner(steam_root_or_library: str | os.PathLike[str] | None) -> str:
+    resolved_root = _resolve_steam_root(steam_root_or_library)
+    if resolved_root is None:
         return "0"
-    loginusers_path = Path(steam_root) / "config" / "loginusers.vdf"
+    loginusers_path = resolved_root / "config" / "loginusers.vdf"
     if not loginusers_path.exists():
         return "0"
 
@@ -579,3 +615,92 @@ def repair_lumatools_library_manifests(
         "failed": failed,
         "decryption_key_blocked": decryption_key_blocked,
     }
+
+
+def generate_download_trigger_acf(
+    dest_path: str,
+    game_data: Dict[str, Any],
+    size_on_disk: int = 0,
+    include_depots: bool = False,
+    logger=None,
+) -> Optional[str]:
+    """Gera um manifest com StateFlags 1026 para forçar download pelos servidores da Valve."""
+    acf_path = write_acf_file(
+        dest_path, game_data, size_on_disk, include_depots, logger=logger
+    )
+    if not acf_path:
+        return None
+
+    try:
+        with open(acf_path, "r", encoding="utf-8", errors="ignore") as handle:
+            content = handle.read()
+            
+        # 1026 = StateUpdateRequired (2) | StateUpdateQueued (1024)
+        replacements = {
+            "StateFlags": "1026",
+            "AutoUpdateBehavior": "0",
+            "AllowOtherDownloadsWhileRunning": "1",
+        }
+        
+        for key, value in replacements.items():
+            pattern = rf'("{re.escape(key)}"\s*)"[^"]*"'
+            if re.search(pattern, content):
+                content = re.sub(
+                    pattern,
+                    lambda match: f'{match.group(1)}"{value}"',
+                    content,
+                    count=1,
+                )
+                
+        with open(acf_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            
+        if logger:
+            logger.info("Generated download trigger ACF for AppID %s", game_data.get("appid"))
+        return acf_path
+    except OSError as exc:
+        if logger:
+            logger.warning("Failed to modify ACF for download trigger: %s", exc)
+        return None
+
+
+def validate_acf_integrity(dest_path: str, appid: str) -> bool:
+    """Verifica se o ACF está íntegro e condizente com os arquivos no disco."""
+    if not dest_path or not appid:
+        return False
+        
+    steamapps_dir = os.path.join(dest_path, "steamapps")
+    acf_path = os.path.join(steamapps_dir, f"appmanifest_{appid}.acf")
+    
+    if not os.path.exists(acf_path):
+        return False
+        
+    try:
+        with open(acf_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            
+        installdir = _parse_acf_value(content, "installdir")
+        if not installdir:
+            return False
+            
+        game_dir = Path(dest_path) / "steamapps" / "common" / installdir
+        if not game_dir.exists() or not game_dir.is_dir():
+            return False
+            
+        # Verifica StateFlags
+        state_flags = _parse_acf_value(content, "StateFlags")
+        if not state_flags.isdigit():
+            return False
+            
+        # 4 = Fully Installed
+        if int(state_flags) == 4:
+            size_on_disk = _parse_acf_value(content, "SizeOnDisk")
+            if not size_on_disk.isdigit() or int(size_on_disk) == 0:
+                # Verifica se o jogo tem arquivos (pode ser vazio se for só stub, mas raro)
+                computed_size = _compute_directory_size(game_dir)
+                if computed_size > 0:
+                    return False
+                    
+        return True
+    except OSError:
+        return False

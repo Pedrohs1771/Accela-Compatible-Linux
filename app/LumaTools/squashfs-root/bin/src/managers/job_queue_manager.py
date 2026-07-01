@@ -248,42 +248,33 @@ class JobQueueManager(QObject):
 
                 result = steam_helpers.start_steam()
 
-                if result == "MISSING_SLSSTEAM":
-                    logger.warning("SLSsteam missing; attempting automatic repair.")
+                repairable_slssteam_errors = {
+                    "MISSING_SLSSTEAM",
+                    "SLSSTEAM_INCOMPATIBLE",
+                    "SLSSTEAM_CRASHED",
+                    "SLSSTEAM_NOT_LOADED",
+                }
+
+                if result in repairable_slssteam_errors:
+                    logger.warning(
+                        "SLSsteam start failed with %s; attempting automatic repair.",
+                        result,
+                    )
                     repaired = self._repair_slssteam()
-                    if repaired and steam_helpers.start_steam() == "SUCCESS":
-                        logger.info("Steam started successfully after SLSsteam installation.")
+                    retry_result = steam_helpers.start_steam() if repaired else result
+                    if retry_result == "SUCCESS":
+                        logger.info("Steam started successfully after SLSsteam repair.")
                     else:
-                        steam_helpers.start_steam_plain()
-                        self._show_slssteam_fallback_message(
-                            "SLSsteam não encontrado",
-                            "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam porque não há bibliotecas compatíveis instaladas.",
-                        )
-                elif result == "SLSSTEAM_INCOMPATIBLE":
-                    logger.warning("SLSsteam incompatible; attempting automatic repair.")
-                    repaired = self._repair_slssteam()
-                    if repaired:
-                        logger.info("Retrying Steam start after SLSsteam repair.")
-                        retry_result = steam_helpers.start_steam()
-                        if retry_result == "SUCCESS":
-                            logger.info("Steam started successfully after SLSsteam repair.")
-                        else:
-                            steam_helpers.start_steam_plain()
-                            self._show_slssteam_fallback_message(
-                                "SLSsteam incompatível",
-                                "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam porque as bibliotecas detectadas não combinam com o Steam.",
-                            )
-                    else:
-                        steam_helpers.start_steam_plain()
-                        self._show_slssteam_fallback_message(
-                            "SLSsteam incompatível",
-                            "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam para evitar erro ELFCLASS.",
+                        self._show_message_safe(
+                            "SLSsteam não carregou",
+                            "A Steam não foi reiniciada sem SLSsteam. Repare ou reinstale o SLSsteam e tente novamente.",
+                            "critical",
                         )
                 elif result == "SLSSTEAM_UNSUPPORTED":
-                    steam_helpers.start_steam_plain()
-                    self._show_slssteam_fallback_message(
+                    self._show_message_safe(
                         "Modo Steam sem suporte ao SLSsteam",
-                        "O jogo foi instalado normalmente. A Steam foi aberta sem SLSsteam porque esse formato de instalação não é suportado pelo projeto oficial.",
+                        "Esse formato de instalação da Steam não é suportado pelo SLSsteam oficial.",
+                        "critical",
                     )
                 elif result == "SUCCESS":
                     logger.info("Steam started successfully with cached libraries.")
@@ -306,6 +297,7 @@ class JobQueueManager(QObject):
                         )
 
                     time.sleep(1)
+                    self._repair_managed_steam_state()
                     logger.info("Restarting Steam with native Windows launch flow...")
                     if steam_helpers.start_steam() != "SUCCESS":
                         self._show_message_safe(

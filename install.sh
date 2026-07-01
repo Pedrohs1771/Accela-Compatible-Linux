@@ -1280,6 +1280,45 @@ PY
     log "Runtime validado: dependências nativas e Python estão prontas."
 }
 
+slssteam_install_compatible() {
+    local src_dir py_bin
+    src_dir="$DEST_DIR/squashfs-root/bin/src"
+    py_bin="$DEST_DIR/squashfs-root/bin/.venv/bin/python"
+    if [ ! -x "$py_bin" ]; then
+        py_bin="python3"
+    fi
+
+    [ -d "$src_dir" ] || return 1
+
+    LUMATOOLS_SRC="$src_dir" "$py_bin" - <<'PY'
+import os
+import sys
+
+src = os.environ["LUMATOOLS_SRC"]
+sys.path.insert(0, src)
+
+try:
+    from core.tasks.download_slssteam_task import DownloadSLSsteamTask
+except Exception as exc:
+    print(f"SLSSTEAM_STATUS_ERROR={exc}")
+    raise SystemExit(1)
+
+status = DownloadSLSsteamTask.installed_library_status()
+print(
+    "SLSSTEAM_COMPATIBLE={compatible} MODE={mode} TARGET={target} "
+    "SLS={sls} INJECT={inject} FLATPAK_OVERRIDE={override}".format(
+        compatible=status.get("compatible"),
+        mode=status.get("steam_mode"),
+        target=status.get("target_class"),
+        sls=status.get("slssteam_class"),
+        inject=status.get("library_inject_class"),
+        override=status.get("flatpak_override_ready"),
+    )
+)
+raise SystemExit(0 if status.get("compatible") else 1)
+PY
+}
+
 install_slssteam() {
     if [ "$MODE" = "portable" ] && [ "$STEAM_MODE" = "Ausente" ]; then
         warn "Steam não detectada; pulando SLSsteam no modo portátil."
@@ -1355,9 +1394,12 @@ PY
 )"
 
     if [ -n "$latest_version" ] && [ -f "$version_file" ] && [ "$(cat "$version_file")" = "$latest_version" ]; then
-        log "SLSsteam já está atualizado em $latest_version."
-        rm -rf "$tmp_dir"
-        return
+        if slssteam_install_compatible; then
+            log "SLSsteam já está atualizado e compatível em $latest_version."
+            rm -rf "$tmp_dir"
+            return
+        fi
+        warn "SLSsteam está em $latest_version, mas a instalação/override não está funcional; reinstalando."
     fi
 
     download_to_file "$asset_url" "$archive"

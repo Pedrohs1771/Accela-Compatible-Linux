@@ -77,6 +77,29 @@ class SteamLibraryDestinationTests(unittest.TestCase):
 
         self.assertEqual(selected, libraries[0])
 
+    def test_existing_install_path_preserves_real_install_directory(self):
+        manager = TaskManager.__new__(TaskManager)
+        manager.current_job_metadata = {
+            "library_path": "/mnt/games/SteamLibrary",
+            "install_path": "/mnt/games/SteamLibrary/steamapps/common/Terraria",
+        }
+        manager.game_data = {
+            "appid": "105600",
+            "game_name": "Terraria",
+            "installdir": "WrongFolder",
+        }
+
+        with mock.patch(
+            "core.steam_helpers.get_steam_libraries",
+            return_value=["/home/user/.steam", "/mnt/games/SteamLibrary"],
+        ):
+            manager._hydrate_game_data_from_job_metadata()
+
+        self.assertEqual(manager.game_data["library_path"], "/mnt/games/SteamLibrary")
+        self.assertEqual(manager.game_data["install_path"], "/mnt/games/SteamLibrary/steamapps/common/Terraria")
+        self.assertEqual(manager.game_data["installdir"], "Terraria")
+        self.assertEqual(manager.game_data["install_dir"], "Terraria")
+
 
 if __name__ == "__main__":
     unittest.main()

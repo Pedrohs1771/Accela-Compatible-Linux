@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
@@ -73,6 +74,15 @@ def cache_depot_manifests(
         return result
 
     cache_dir = Path(library_path) / "steamapps" / "depotcache"
+    if sys.platform == "win32":
+        try:
+            from core.steam_helpers import find_steam_install
+
+            steam_root = find_steam_install()
+            if steam_root:
+                cache_dir = Path(steam_root) / "depotcache"
+        except ImportError:
+            pass
     cache_dir.mkdir(parents=True, exist_ok=True)
     source_root = Path(source_dir) if source_dir else None
 

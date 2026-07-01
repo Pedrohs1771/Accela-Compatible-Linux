@@ -206,6 +206,21 @@ class ManifestCheckTask(QObject):
                 return "cannot_determine"
 
             steam_client_data = batched_results[appid]
+            
+            # --- START BUILDID CHECK ---
+            local_buildid = game_data.get("buildid")
+            if local_buildid:
+                try:
+                    remote_buildid = steam_client_data.get("depots", {}).get("branches", {}).get("public", {}).get("buildid")
+                    if remote_buildid:
+                        if str(local_buildid) != str(remote_buildid):
+                            logger.info(f"Update available for app {appid}: local buildid={local_buildid}, remote buildid={remote_buildid}")
+                            return "update_available"
+                        else:
+                            return "up_to_date"
+                except Exception as e:
+                    logger.debug(f"BuildID check failed for app {appid}, falling back to manifest check: {e}")
+            # --- END BUILDID CHECK ---
 
             # Look for the manifest ID in the response
             if steam_client_data and steam_client_data.get("depots"):

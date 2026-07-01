@@ -5,6 +5,8 @@ import psutil
 import shutil
 import subprocess
 import re
+import time
+from pathlib import Path
 
 from core.linux_paths import (
     detect_linux_steam_mode,
@@ -102,6 +104,113 @@ def _valid_ld_audit_pair(
     return False
 
 
+def _prepare_slssteam_config_for_launch() -> None:
+    """Run cheap config repairs before SLSsteam parses config.yaml."""
+    if sys.platform != "linux":
+        return
+
+    try:
+        from utils.yaml_config_manager import (
+            ensure_slssteam_api_enabled,
+            ensure_slssteam_config,
+            fix_slssteam_config_indentation,
+            get_user_config_path,
+        )
+    except Exception:
+        logger.debug("SLSsteam config helpers unavailable", exc_info=True)
+        return
+
+    try:
+        config_path = get_user_config_path()
+        ensure_slssteam_config(config_path)
+        fix_slssteam_config_indentation(config_path)
+        ensure_slssteam_api_enabled(config_path)
+    except Exception:
+        logger.warning("Failed to prepare SLSsteam config before launch", exc_info=True)
+
+
+def _unblock_native_steam_updates(steam_mode: str | None = None) -> None:
+    """Move steam.cfg out of the way when it prevents Steam bootstrap updates."""
+    if sys.platform != "linux" or steam_mode == "flatpak":
+        return
+
+    root = find_primary_steam_root(preferred_mode="native")
+    if root is None:
+        return
+
+    config_path = root / "steam.cfg"
+    try:
+        content = config_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return
+
+    blocked_flags = (
+        "BootStrapperInhibitAll=enable",
+        "BootStrapperForceSelfUpdate=disable",
+    )
+    if not any(flag in content for flag in blocked_flags):
+        return
+
+    backup_path = config_path.with_name(
+        f"steam.cfg.lumatools-backup-{time.strftime('%Y%m%d_%H%M%S')}"
+    )
+    try:
+        config_path.replace(backup_path)
+        logger.info("Moved Steam update inhibitor to %s", backup_path)
+    except OSError:
+        logger.warning("Failed to move Steam update inhibitor %s", config_path, exc_info=True)
+
+
+def _command_exists(command: list[str]) -> bool:
+    if not command:
+        return False
+    executable = command[0]
+    if os.path.isabs(executable) or os.sep in executable:
+        return os.path.exists(executable) and os.access(executable, os.X_OK)
+    return shutil.which(executable) is not None
+
+
+def _is_slssteam_wrapper_command(command: list[str]) -> bool:
+    if not command:
+        return False
+    normalized = command[0].replace("\\", "/")
+    return "/SLSsteam/path/" in normalized
+
+
+def _slssteam_launch_command(launch_command: list[str] | None = None) -> list[str]:
+    candidates: list[list[str]] = []
+
+    system_steam = Path("/usr/bin/steam")
+    if system_steam.exists() and os.access(system_steam, os.X_OK):
+        candidates.append([str(system_steam)])
+
+    if launch_command:
+        candidates.append(launch_command)
+
+    plain_command = get_plain_steam_launch_command("native")
+    if plain_command:
+        candidates.append(plain_command)
+
+    detected_command = get_steam_launch_command("native")
+    if detected_command:
+        candidates.append(detected_command)
+
+    candidates.append(["steam"])
+
+    seen: set[tuple[str, ...]] = set()
+    for command in candidates:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_slssteam_wrapper_command(command):
+            continue
+        if _command_exists(command):
+            return command
+
+    return ["steam"]
+
+
 def _flatpak_slssteam_override_ready(
     slssteam_path: str | None = None,
     library_inject_path: str | None = None,
@@ -140,6 +249,107 @@ def _flatpak_slssteam_override_ready(
     if library_inject_path and str(library_inject_path) not in output:
         logger.debug("Flatpak SLSsteam override points to a different library-inject.so")
     return True
+
+
+def _is_linux_steam_process(name: str, cmdline: str, exe: str) -> bool:
+    lowered_name = (name or "").lower()
+    lowered_cmdline = (cmdline or "").lower()
+    lowered_exe = (exe or "").lower()
+
+    if lowered_name in {"steam", "steamwebhelper", "steam-runtime-launcher-service"}:
+        return True
+
+    runtime_names = {"bash", "srt-logger", "srt-bwrap", "pv-adverb"}
+    steam_markers = (
+        "/steam/steam.sh",
+        "/steam/ubuntu12_32/",
+        "/steam/ubuntu12_64/",
+        "/steam/steamrt",
+        "steamwebhelper",
+        "steam-runtime-launcher-service",
+    )
+    return lowered_name in runtime_names and any(
+        marker in lowered_cmdline or marker in lowered_exe for marker in steam_markers
+    )
+
+
+def _iter_linux_steam_processes():
+    if sys.platform != "linux":
+        return
+    try:
+        processes = psutil.process_iter(["pid", "name", "cmdline", "exe"])
+    except (AttributeError, psutil.Error):
+        return
+
+    for proc in processes:
+        try:
+            name = proc.info.get("name") or ""
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            exe = proc.info.get("exe") or ""
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+        if _is_linux_steam_process(name, cmdline, exe):
+            yield proc
+
+
+def _steam_processes_running() -> bool:
+    return any(True for _proc in _iter_linux_steam_processes())
+
+
+def _steam_processes_have_slssteam(
+    slssteam_path: str | None,
+    library_inject_path: str | None,
+) -> bool:
+    sls_needles = {
+        "SLSsteam.so",
+        "libSLSsteam.so",
+    }
+    inject_needles = {
+        "library-inject.so",
+        "libSLS-library-inject.so",
+    }
+    if slssteam_path:
+        sls_needles.add(str(Path(slssteam_path).resolve()))
+    if library_inject_path:
+        inject_needles.add(str(Path(library_inject_path).resolve()))
+
+    for proc in _iter_linux_steam_processes():
+        maps_file = Path("/proc") / str(proc.pid) / "maps"
+        try:
+            content = maps_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if any(needle in content for needle in sls_needles) and any(
+            needle in content for needle in inject_needles
+        ):
+            return True
+    return False
+
+
+def _wait_for_slssteam_launch(
+    slssteam_path: str | None,
+    library_inject_path: str | None,
+    process: subprocess.Popen | None,
+    timeout_seconds: float = 10.0,
+) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    saw_steam_process = False
+
+    while time.monotonic() < deadline:
+        if _steam_processes_have_slssteam(slssteam_path, library_inject_path):
+            return "SUCCESS"
+        if _steam_processes_running():
+            saw_steam_process = True
+        if process is not None and process.poll() is not None and not saw_steam_process:
+            # The launcher may exit before Steam hands off to its real process.
+            # Keep polling briefly so a slow runtime bootstrap still has a chance.
+            pass
+        time.sleep(0.5)
+
+    if saw_steam_process:
+        return "SLSSTEAM_NOT_LOADED"
+    return "SLSSTEAM_CRASHED"
 
 
 def find_steam_install():
@@ -305,6 +515,7 @@ def start_steam():
 
     try:
         if sys.platform == "win32":
+            fix_greenluma_offline_mode()
             steam_path = find_steam_install()
             if not steam_path:
                 return "FAILED"
@@ -324,10 +535,13 @@ def start_steam():
 
             if not is_slssteam_supported(steam_mode):
                 logger.warning(
-                    "SLSsteam não é suportado pelo modo Steam %s; usando fallback limpo.",
+                    "SLSsteam não é suportado pelo modo Steam %s.",
                     steam_mode,
                 )
                 return "SLSSTEAM_UNSUPPORTED"
+
+            _unblock_native_steam_updates(steam_mode)
+            _prepare_slssteam_config_for_launch()
 
             if steam_mode == "flatpak":
                 slssteam_path = _slssteam_so_path_cache
@@ -386,6 +600,7 @@ def start_steam():
                         slssteam_path,
                         library_inject_path,
                         launch_command=launch_command,
+                        expected_class=target_class,
                     )
                     # Only clear caches if successful
                     if success == "SUCCESS":
@@ -435,10 +650,15 @@ def start_steam_plain():
 
 
 def start_steam_with_slssteam(
-    slssteam_path=None, library_inject_path=None, launch_command=None
+    slssteam_path=None,
+    library_inject_path=None,
+    launch_command=None,
+    expected_class=None,
 ):
-    """Start Steam on Linux with SLSsteam.so AND library-inject.so via LD_AUDIT
-    Returns: "SUCCESS", "FAILED", or "NEEDS_USER_PATH"
+    """Start Steam on Linux with SLSsteam.so AND library-inject.so via LD_AUDIT.
+
+    Returns: "SUCCESS", "FAILED", "NEEDS_USER_PATH", "SLSSTEAM_CRASHED", or
+    "SLSSTEAM_NOT_LOADED".
     """
 
     if sys.platform != "linux":
@@ -456,7 +676,7 @@ def start_steam_with_slssteam(
         )
         return "NEEDS_USER_PATH"
 
-    expected_class = _steam_audit_target_class()
+    expected_class = expected_class or _steam_audit_target_class()
     if not _valid_ld_audit_pair(
         slssteam_path,
         library_inject_path,
@@ -470,15 +690,23 @@ def start_steam_with_slssteam(
         )
         env = os.environ.copy()
         env["LD_AUDIT"] = f"{library_inject_path}:{slssteam_path}"
-        command = launch_command or get_steam_launch_command("native") or ["steam"]
+        command = _slssteam_launch_command(launch_command)
         logger.info("Starting Steam command: %s", " ".join(command))
-        subprocess.Popen(
+        process = subprocess.Popen(
             command,
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return "SUCCESS"
+        result = _wait_for_slssteam_launch(
+            slssteam_path,
+            library_inject_path,
+            process,
+            timeout_seconds=15.0,
+        )
+        if result != "SUCCESS":
+            logger.error("Steam started but SLSsteam did not load correctly: %s", result)
+        return result
     except (OSError, subprocess.SubprocessError) as e:
         logger.error(
             f"Failed to execute steam with provided libraries: {e}", exc_info=True
@@ -554,25 +782,21 @@ def slssteam_api_send(command: str) -> bool:
 
 
 def fix_greenluma_offline_mode():
-    """Fix WantsOfflineMode in loginusers.vdf to prevent Steam breakage with GreenLuma.
+    """Fix Windows autologin accounts stuck with WantsOfflineMode=1.
 
-    When Steam is closed with Offline Mode enabled and then launched with GreenLuma,
-    it can break Steam. This function automatically changes WantsOfflineMode from 1 to 0.
+    The Windows build should restart Steam back into the normal online flow when a
+    remembered account is available. If Steam stores WantsOfflineMode=1 in
+    ``loginusers.vdf``, later restarts can reopen straight into offline mode.
     """
     if sys.platform != "win32":
         return
 
     try:
         from utils.settings import get_settings
-        from utils.yaml_config_manager import is_greenluma_wrapper_mode_enabled
     except ImportError:
         return
 
     settings = get_settings()
-    if not is_greenluma_wrapper_mode_enabled():
-        return
-
-    # Check if config management is enabled
     if not settings.value("sls_config_management", True, type=bool):
         return
 
@@ -592,7 +816,12 @@ def fix_greenluma_offline_mode():
 
         fixed = False
         for user in data.get("users", {}).values():
-            if user.get("WantsOfflineMode") == "1":
+            wants_offline = user.get("WantsOfflineMode") == "1"
+            can_autologin = (
+                user.get("RememberPassword") == "1"
+                or user.get("AllowAutoLogin") == "1"
+            )
+            if wants_offline and can_autologin:
                 user["WantsOfflineMode"] = "0"
                 fixed = True
 
@@ -600,7 +829,7 @@ def fix_greenluma_offline_mode():
             with open(login_file, "w", encoding="utf-8") as f:
                 vdf.dump(data, f)
             logger.info(
-                "Fixed WantsOfflineMode in loginusers.vdf to prevent GreenLuma issues"
+                "Fixed WantsOfflineMode in loginusers.vdf for Windows Steam autologin"
             )
     except ImportError:
         logger.warning("vdf library not installed, cannot fix offline mode")

@@ -1,8 +1,0 @@
-{
-  "name": "LumaTools Companion",
-  "author": "Pedrohs1771",
-  "description": "Adds a small LumaTools status panel to the Steam UI through the local LumaTools bridge.",
-  "version": "0.1.0",
-  "entry": "main.js",
-  "style": "style.css"
-}

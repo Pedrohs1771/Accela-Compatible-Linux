@@ -563,6 +563,8 @@ class RyuuFixesDialog(QDialog):
             "auto_select_depots": True,
             "steam_restart_after": True,
             "library_path": (self.selected_game or {}).get("library_path", ""),
+            "install_path": (self.selected_game or {}).get("install_path", ""),
+            "install_dir": (self.selected_game or {}).get("install_dir", ""),
         }
         job_queue = getattr(self.main_window, "job_queue", None)
         if job_queue is not None and hasattr(job_queue, "add_job"):

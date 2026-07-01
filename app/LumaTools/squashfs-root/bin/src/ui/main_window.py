@@ -317,6 +317,8 @@ class MainWindow(QMainWindow):
         if self.system_integration: self.system_integration.steam_closed.connect(self._handle_steam_closed)
         if self.update_manager: self.update_manager.update_available_changed.connect(self._handle_update_available_changed)
         if self.steam_bridge_manager: self.steam_bridge_manager.start()
+        if self.task_manager: self.task_manager.check_and_update_slssteam_silent()
+
 
     def _setup_resize_handles(self) -> None:
         for edge in ["right", "bottom"]:
@@ -482,14 +484,9 @@ class MainWindow(QMainWindow):
             for z in payload["zip_files"]: self.add_job_safely(z)
 
     def queue_manifest_download(self, appid: int):
-        threading.Thread(target=self._threaded_download, args=(appid,), daemon=True).start()
-
-    def _threaded_download(self, appid):
-        try:
-            api_key = self.settings.value("morrenus_api_key", "")
-            zip_file = self.manifest_downloader.fetch_manifest(str(appid), api_key)
-            if zip_file: QTimer.singleShot(0, lambda: self.add_job_safely(zip_file))
-        except Exception as e: logger.error(f"Download failed: {e}")
+        # Chama a função unificada de One-Click Install usando o task_manager
+        api_key = self.settings.value("morrenus_api_key", "")
+        self.task_manager.start_one_click_install(str(appid), api_key=api_key)
 
     @pyqtSlot(str)
     def add_job_safely(self, path):

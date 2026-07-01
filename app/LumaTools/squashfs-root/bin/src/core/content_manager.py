@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sys
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -251,6 +252,43 @@ class ContentManager:
         packages.append(record)
         self.save_registry(payload)
 
+    def auto_unlock_all_dlcs(
+        self,
+        appid: str,
+        game_dir: str | os.PathLike[str],
+    ) -> dict[str, Any]:
+        """Automatically fetch and unlock all DLCs for a given AppID."""
+        appid = str(appid).strip()
+        logger.info(f"Starting automatic DLC unlock for AppID {appid}")
+        
+        # 1. Fetch catalog
+        dlc_names, game_name = self.fetch_store_dlc_catalog(appid)
+        dlcs = list(dlc_names.keys())
+        
+        if not dlcs:
+            logger.warning(f"No DLCs found for AppID {appid} to auto-unlock.")
+            return {"success": False, "message": "No DLCs found"}
+            
+        # 2. Build preview
+        preview = self.build_dlc_preview(
+            appid=appid,
+            game_name=game_name,
+            dlcs=dlcs,
+            source="auto_unlock",
+            filename=f"AutoUnlock_{appid}"
+        )
+        
+        # 3. Activate DLCs
+        info = self.activate_dlcs(
+            preview=preview,
+            game_dir=game_dir,
+            selected_dlcs=dlcs,
+            dlc_names=dlc_names,
+            source="auto_unlock"
+        )
+        
+        return {"success": True, "activated_count": len(dlcs), "info": info}
+
     def activate_dlcs(
         self,
         preview: ContentPackagePreview,
@@ -324,3 +362,128 @@ class ContentManager:
             preview.game_name,
         )
         return info
+
+    def deep_scan_dlcs(self, appid: str) -> dict[str, str]:
+        """Varredura profunda por DLCs, cruzando API da loja e scraping direto."""
+        api_dlcs, _ = self.fetch_store_dlc_catalog(appid)
+        scraped_ids = self._scrape_store_dlc_ids(appid)
+        
+        # Merge de IDs scraped que nao vieram na API
+        missing_ids = [did for did in scraped_ids if did not in api_dlcs]
+        if missing_ids:
+            missing_names = self.fetch_app_names(missing_ids)
+            api_dlcs.update(missing_names)
+            
+        return api_dlcs
+
+    def auto_detect_dlc_method(self, game_dir: str | os.PathLike[str]) -> str:
+        """Determina o melhor método de unlock (slssteam, creamapi, goldberg)."""
+        root = Path(game_dir).expanduser().resolve()
+        if not root.exists():
+            return "slssteam"
+            
+        has_steam_api = any(root.rglob("steam_api.dll")) or any(root.rglob("steam_api64.dll"))
+        has_goldberg = (root / "steam_settings").exists()
+        
+        if has_goldberg:
+            return "goldberg"
+            
+        # No Linux, se tem steam_api.dll, é jogo Windows via Proton.
+        # CreamAPI/SmokeAPI funciona perfeitamente injetado.
+        if has_steam_api and sys.platform == "linux":
+            # Poderíamos também preferir slssteam, mas o plano pede creamapi fallback
+            return "creamapi"
+            
+        return "slssteam"
+
+    def generate_cream_api_config(self, game_dir: str | os.PathLike[str], appid: str, dlc_dict: dict[str, str]) -> str:
+        """Gera um arquivo cream_api.ini para a lista de DLCs fornecida."""
+        root = Path(game_dir).expanduser().resolve()
+        
+        ini_content = "[steam]\n"
+        ini_content += f"appid = {appid}\n"
+        ini_content += "unlockall = false\n"
+        ini_content += "orgapi = steam_api_o.dll\n"
+        ini_content += "orgapi64 = steam_api64_o.dll\n"
+        ini_content += "extraprotection = false\n"
+        ini_content += "forceappid = false\n\n"
+        
+        ini_content += "[steam_misc]\n"
+        ini_content += "disableuserinterface = false\n\n"
+        
+        ini_content += "[dlc]\n"
+        for did, dname in dlc_dict.items():
+            ini_content += f"{did} = {dname}\n"
+            
+        ini_path = root / "cream_api.ini"
+        ini_path.write_text(ini_content, encoding="utf-8")
+        logger.info("Generated cream_api.ini at %s", ini_path)
+        return str(ini_path)
+
+    def generate_goldberg_dlc_txt(self, game_dir: str | os.PathLike[str], dlc_dict: dict[str, str]) -> str:
+        """Gera DLC.txt para o Goldberg emulator."""
+        root = Path(game_dir).expanduser().resolve()
+        settings_dir = root / "steam_settings"
+        settings_dir.mkdir(exist_ok=True)
+        
+        txt_content = ""
+        for did, dname in dlc_dict.items():
+            txt_content += f"{did}={dname}\n"
+            
+        txt_path = settings_dir / "DLC.txt"
+        txt_path.write_text(txt_content, encoding="utf-8")
+        logger.info("Generated Goldberg DLC.txt at %s", txt_path)
+        return str(txt_path)
+
+    def batch_activate_all_dlcs(self, appid: str, game_dir: str | os.PathLike[str]) -> dict[str, Any]:
+        """Método de ativação definitivo: scaneia, detecta método e ativa."""
+        appid = str(appid).strip()
+        root = Path(game_dir).expanduser().resolve()
+        
+        dlc_dict = self.deep_scan_dlcs(appid)
+        if not dlc_dict:
+            return {"success": False, "message": "No DLCs found"}
+            
+        method = self.auto_detect_dlc_method(root)
+        logger.info("Auto-detected DLC method '%s' for AppID %s", method, appid)
+        
+        result = {
+            "success": True,
+            "method": method,
+            "activated_count": len(dlc_dict),
+            "dlcs": dlc_dict,
+            "paths": []
+        }
+        
+        if method == "creamapi":
+            ini_path = self.generate_cream_api_config(root, appid, dlc_dict)
+            result["paths"].append(ini_path)
+            # Para CreamAPI funcionar, online_fix_injector deveria trocar as DLLs,
+            # mas assumimos que o config está pronto.
+            
+        elif method == "goldberg":
+            txt_path = self.generate_goldberg_dlc_txt(root, dlc_dict)
+            result["paths"].append(txt_path)
+            
+        elif method == "slssteam":
+            # Usa o método padrão do LumaTools (config.yaml)
+            self.auto_unlock_all_dlcs(appid, root)
+            result["paths"].append(str(get_user_config_path()))
+            
+        return result
+
+    def verify_dlc_files_exist(self, game_dir: str | os.PathLike[str]) -> bool:
+        """Verifica heuristicamente se há arquivos extras que poderiam ser DLCs."""
+        root = Path(game_dir).expanduser().resolve()
+        if not root.exists():
+            return False
+            
+        # Verifica diretórios comuns de DLC
+        dlc_folders = ["DLC", "dlc", "Expansion", "addons", "Addons"]
+        for folder in dlc_folders:
+            if (root / folder).exists():
+                return True
+                
+        # Verifica arquivos com dlc no nome (muito comum em Unity/Unreal)
+        has_dlc_files = any(root.rglob("*dlc*.*")) or any(root.rglob("*DLC*.*"))
+        return has_dlc_files

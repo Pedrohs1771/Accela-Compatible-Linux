@@ -142,6 +142,43 @@ class TaskManager(QObject):
     def last_installed_game(self):
         return self._last_installed_game
 
+    def start_one_click_install(self, appid: str, api_key: str = "", metadata: Optional[Dict[str, Any]] = None):
+        """Fluxo One-Click Install: Baixa o manifesto e inicia o processamento completo."""
+        self.is_processing = True
+        if self.main_window:
+            self.main_window.progress_bar.setVisible(True)
+            self.main_window.progress_bar.setRange(0, 0)
+            self.main_window.drop_text_label.setText(f"Baixando manifestos para AppID {appid}...")
+
+        def _fetch_worker():
+            try:
+                from core.manifest_downloader import ManifestEngine
+                engine = ManifestEngine(api_key=api_key)
+                
+                result = engine.fetch_manifest_parallel(appid)
+                
+                if result.success and result.zip_path:
+                    job_meta = metadata or {}
+                    job_meta["source"] = f"api_{result.api_name}"
+                    
+                    # Usa QTimer.singleShot para pular pra thread principal
+                    QTimer.singleShot(0, lambda: self.start_zip_processing(result.zip_path, job_meta))
+                else:
+                    logger.error(f"One-click install failed for {appid}: {result.error}")
+                    def show_err():
+                        QMessageBox.warning(
+                            self.main_window,
+                            "Falha no Download",
+                            f"Não foi possível baixar os manifestos para o AppID {appid}.\nErro: {result.error}"
+                        )
+                        self.job_finished()
+                    QTimer.singleShot(0, show_err)
+            except Exception as e:
+                logger.error(f"Exception in one-click fetch worker: {e}", exc_info=True)
+                QTimer.singleShot(0, self.job_finished)
+
+        threading.Thread(target=_fetch_worker, daemon=True, name=f"FetchWorker-{appid}").start()
+
     def start_zip_processing(self, zip_path, metadata=None):
         self.is_processing = True
         self.current_job = zip_path
@@ -173,6 +210,7 @@ class TaskManager(QObject):
         self.main_window.progress_bar.setRange(0, 100)
         self.main_window.progress_bar.setValue(100)
         self.game_data = game_data
+        self._hydrate_game_data_from_job_metadata()
 
         if self.game_data and self.game_data.get("depots"):
             if self._should_auto_select_depots():
@@ -186,6 +224,60 @@ class TaskManager(QObject):
                 "O arquivo ZIP foi processado, mas nenhum depot disponível para download foi encontrado.",
             )
             self.job_finished()
+
+    def _hydrate_game_data_from_job_metadata(self) -> None:
+        if not self.game_data:
+            return
+
+        metadata = self.current_job_metadata or {}
+        if not metadata:
+            return
+
+        library_paths = steam_helpers.get_steam_libraries()
+        library_path = str(metadata.get("library_path") or "").strip()
+        resolved_library = ""
+        if library_path:
+            resolved_library = steam_helpers.resolve_steam_library_path(
+                library_path,
+                library_paths,
+            )
+            self.game_data["library_path"] = resolved_library
+
+        install_path = str(metadata.get("install_path") or "").strip()
+        install_dir = str(metadata.get("install_dir") or "").strip()
+        derived_install_dir = install_dir
+
+        if install_path:
+            normalized_install_path = os.path.realpath(
+                os.path.normpath(os.path.expanduser(install_path))
+            )
+            self.game_data["install_path"] = normalized_install_path
+
+            if not derived_install_dir:
+                install_candidate = Path(normalized_install_path)
+                derived_install_dir = install_candidate.name
+
+                if resolved_library:
+                    common_dir = (
+                        Path(resolved_library) / "steamapps" / "common"
+                    ).resolve()
+                    try:
+                        relative_install = install_candidate.resolve().relative_to(common_dir)
+                    except ValueError:
+                        relative_install = None
+                    if relative_install and relative_install.parts:
+                        derived_install_dir = relative_install.parts[0]
+
+        if derived_install_dir:
+            previous_installdir = self.game_data.get("installdir")
+            self.game_data["installdir"] = derived_install_dir
+            self.game_data["install_dir"] = derived_install_dir
+            if previous_installdir and previous_installdir != derived_install_dir:
+                logger.info(
+                    "Overriding install directory from job metadata: %s -> %s",
+                    previous_installdir,
+                    derived_install_dir,
+                )
 
     def _should_auto_select_depots(self) -> bool:
         metadata = self.current_job_metadata or {}
@@ -1299,7 +1391,7 @@ class TaskManager(QObject):
         processed = 0
         for target_dir in target_dirs:
             try:
-                self._apply_goldberg_to_single_dir(target_dir, appid, goldberg_src)
+                self._apply_goldberg_to_single_dir(target_dir, appid, goldberg_src, game_directory)
                 processed += 1
             except Exception as e:
                 logger.error(f"Failed to apply Goldberg in {target_dir}: {e}")
@@ -1371,7 +1463,7 @@ class TaskManager(QObject):
         return targets
 
     def _apply_goldberg_to_single_dir(
-        self, target_dir: str, appid: str, goldberg_src: Path
+        self, target_dir: str, appid: str, goldberg_src: Path, game_directory: str = ""
     ):
         """Apply Goldberg to one directory."""
         renamed_files = self._backup_steam_api_files(target_dir)
@@ -1392,6 +1484,8 @@ class TaskManager(QObject):
             self._write_appid_file(target_dir, appid)
             
         self._generate_interfaces_for_valve_files(target_dir, goldberg_src)
+        if game_directory:
+            self._write_goldberg_dlc_file(target_dir, appid, game_directory)
 
     def _write_force_appid_file(self, target_dir: str, appid: str):
         """Write force_appid.txt in steam_settings folder."""
@@ -1404,6 +1498,85 @@ class TaskManager(QObject):
             logger.info(f"Wrote force_appid.txt with real AppID {appid} to {settings_dir}")
         except OSError as e:
             logger.warning(f"Failed to write force_appid.txt: {e}")
+
+    def _write_goldberg_dlc_file(self, target_dir: str, appid: str, game_directory: str):
+        """Fetch and write DLC.txt for Goldberg emulator in steam_settings."""
+        dlc_entries = {}
+        
+        # 1. Try to read from LUMA_DLC_CONTENT_INFO.json in the game directory
+        info_path = os.path.join(game_directory, "LUMA_DLC_CONTENT_INFO.json")
+        if os.path.exists(info_path):
+            try:
+                import json
+                with open(info_path, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                    activated = info.get("activated_dlcs", [])
+                    for dlc in activated:
+                        d_id = str(dlc.get("appid", "")).strip()
+                        d_name = dlc.get("name", f"DLC {d_id}")
+                        if d_id:
+                            dlc_entries[d_id] = d_name
+                logger.info(f"Loaded {len(dlc_entries)} DLCs from LUMA_DLC_CONTENT_INFO.json")
+            except Exception as e:
+                logger.warning(f"Failed to read LUMA_DLC_CONTENT_INFO.json: {e}")
+                
+        # 2. If empty, try to parse from SLSsteam's config.yaml
+        if not dlc_entries:
+            try:
+                from utils.yaml_config_manager import get_user_config_path
+                config_path = get_user_config_path()
+                if config_path.exists():
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    dlc_data_match = re.search(r"^DlcData:\s*$", content, re.MULTILINE)
+                    if dlc_data_match:
+                        start_pos = dlc_data_match.end()
+                        next_top_key = re.search(r"^[A-Za-z]", content[start_pos:], re.MULTILINE)
+                        end_pos = start_pos + next_top_key.start() if next_top_key else len(content)
+                        dlc_data_section = content[start_pos:end_pos]
+                        
+                        parent_match = re.search(rf"^\s*{re.escape(appid)}:\s*$", dlc_data_section, re.MULTILINE)
+                        if parent_match:
+                            p_start = dlc_data_section.find("\n", parent_match.end()) + 1
+                            lines = dlc_data_section[p_start:].splitlines()
+                            for line in lines:
+                                if line.strip() and not line.strip().startswith("#"):
+                                    m = re.match(r"^\s+(\d+)\s*:\s*\"([^\"]+)\"", line)
+                                    if m:
+                                        dlc_entries[m.group(1)] = m.group(2)
+                                    else:
+                                        if not line.startswith(" "):
+                                            break
+                    if dlc_entries:
+                        logger.info(f"Loaded {len(dlc_entries)} DLCs from SLSsteam config.yaml")
+            except Exception as e:
+                logger.warning(f"Failed to parse SLSsteam config.yaml: {e}")
+                
+        # 3. If still empty, fetch from Steam Store API
+        if not dlc_entries:
+            try:
+                from core.content_manager import ContentManager
+                cm = ContentManager()
+                store_dlcs, _ = cm.fetch_store_dlc_catalog(appid)
+                if store_dlcs:
+                    for d_id, d_name in store_dlcs.items():
+                        dlc_entries[str(d_id)] = d_name
+                    logger.info(f"Fetched {len(dlc_entries)} DLCs from Steam Store API")
+            except Exception as e:
+                logger.warning(f"Failed to fetch DLCs from Steam Store API: {e}")
+
+        # Write to steam_settings/DLC.txt
+        if dlc_entries:
+            settings_dir = os.path.join(target_dir, "steam_settings")
+            os.makedirs(settings_dir, exist_ok=True)
+            dlc_txt_path = os.path.join(settings_dir, "DLC.txt")
+            try:
+                with open(dlc_txt_path, "w", encoding="utf-8") as f:
+                    for dlc_id, dlc_name in dlc_entries.items():
+                        f.write(f"{dlc_id}={dlc_name}\n")
+                logger.info(f"Wrote DLC.txt for Goldberg in {settings_dir} with {len(dlc_entries)} entries.")
+            except OSError as e:
+                logger.warning(f"Failed to write Goldberg DLC.txt: {e}")
 
     def _backup_steam_api_files(self, directory: str) -> List[str]:
         """Rename all steam_api files to .valve. Return list of original filenames."""
@@ -2327,6 +2500,24 @@ class TaskManager(QObject):
         worker = self.slssteam_download_runner.run(self.slssteam_download_task.run)
         worker.error.connect(self._handle_task_error)
 
+    def check_and_update_slssteam_silent(self):
+        if sys.platform != "linux":
+            return
+            
+        def _silent_update():
+            try:
+                status = DownloadSLSsteamTask.check_update_available()
+                if status.get("update_available"):
+                    logger.info("SLSsteam update found in background. Installing...")
+                    DownloadSLSsteamTask.install_latest_blocking()
+                    logger.info("SLSsteam background update completed.")
+            except Exception as e:
+                logger.error(f"SLSsteam background update failed: {e}")
+                
+        self.slssteam_silent_runner = TaskRunner()
+        self.slssteam_silent_runner.run(_silent_update)
+
+
     @staticmethod
     def _handle_slssteam_progress(message):
         logger.info(f"SLSsteam: {message}")
@@ -2538,7 +2729,7 @@ class TaskManager(QObject):
             slssteam_status = DownloadSLSsteamTask.installed_library_status()
             if not slssteam_status.get("compatible"):
                 lines.append(
-                    "AVISO SLSsteam incompatível: Steam será aberta sem injeção"
+                    "AVISO SLSsteam incompatível: repare a integração antes de reiniciar"
                 )
 
         if self._ryuu_status.get("status") in {"applied", "applied_with_conflicts"}:

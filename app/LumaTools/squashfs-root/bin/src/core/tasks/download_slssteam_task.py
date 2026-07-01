@@ -157,18 +157,10 @@ class DownloadSLSsteamTask(QObject):
             cls._extract_archive(archive_path, extract_dir)
             cls._run_setup(extract_dir)
 
+            cls._raise_if_install_incompatible()
+
             cls.install_dir().mkdir(parents=True, exist_ok=True)
             cls.version_file().write_text(f"{latest_version}\n", encoding="utf-8")
-
-            library_status = cls.installed_library_status()
-            if sys.platform == "linux" and not library_status.get("compatible"):
-                raise RuntimeError(
-                    "SLSsteam instalado, mas as bibliotecas não são compatíveis "
-                    f"(esperado={library_status.get('target_class')}, "
-                    f"SLSsteam.so={library_status.get('slssteam_class')}, "
-                    f"library-inject.so={library_status.get('library_inject_class')})."
-                )
-
             return f"SLSsteam {latest_version} instalado em {cls.install_dir()}."
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
@@ -262,6 +254,8 @@ class DownloadSLSsteamTask(QObject):
             if not self._is_running:
                 return
 
+            self._raise_if_install_incompatible()
+
             self.install_dir().mkdir(parents=True, exist_ok=True)
             self.version_file().write_text(f"{latest_version}\n", encoding="utf-8")
             self.progress_percentage.emit(100)
@@ -274,6 +268,19 @@ class DownloadSLSsteamTask(QObject):
             self.error.emit()
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    @classmethod
+    def _raise_if_install_incompatible(cls) -> None:
+        library_status = cls.installed_library_status()
+        if sys.platform == "linux" and not library_status.get("compatible"):
+            raise RuntimeError(
+                "SLSsteam instalado, mas as bibliotecas/override não estão prontos "
+                f"(Steam={library_status.get('steam_mode')}, "
+                f"esperado={library_status.get('target_class')}, "
+                f"SLSsteam.so={library_status.get('slssteam_class')}, "
+                f"library-inject.so={library_status.get('library_inject_class')}, "
+                f"Flatpak override={library_status.get('flatpak_override_ready')})."
+            )
 
     @classmethod
     def _fetch_latest_release(cls) -> dict:
@@ -413,7 +420,7 @@ class DownloadSLSsteamTask(QObject):
         if "SLSsteam.so" not in output or "library-inject.so" not in output:
             return False
         if slssteam_path and str(slssteam_path) not in output:
-            return False
+            logger.debug("Flatpak SLSsteam override points to a different SLSsteam.so")
         if library_inject_path and str(library_inject_path) not in output:
-            return False
+            logger.debug("Flatpak SLSsteam override points to a different library-inject.so")
         return True
