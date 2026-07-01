@@ -38,7 +38,6 @@ from managers.discord_presence_manager import DiscordPresenceManager
 from managers.game_manager import GameManager
 from managers.gif_manager import GIFManager
 from managers.job_queue_manager import JobQueueManager
-from managers.steam_bridge_manager import SteamBridgeManager
 from managers.system_integration_manager import SystemIntegrationManager
 from managers.task_manager import TaskManager
 from managers.update_manager import UpdateManager
@@ -152,7 +151,6 @@ class MainWindow(QMainWindow):
         self.cloud_save_manager = CloudSaveManager(self)
         self.discord_presence_manager = DiscordPresenceManager(self)
         self.update_manager = UpdateManager(self)
-        self.steam_bridge_manager = SteamBridgeManager(self)
         self.manifest_downloader = ManifestDownloader()
         self.workshop_manager = WorkshopManager()
         self.game_manager.scan_steam_libraries_async()
@@ -316,7 +314,6 @@ class MainWindow(QMainWindow):
     def _setup_runtime_integrations(self) -> None:
         if self.system_integration: self.system_integration.steam_closed.connect(self._handle_steam_closed)
         if self.update_manager: self.update_manager.update_available_changed.connect(self._handle_update_available_changed)
-        if self.steam_bridge_manager: self.steam_bridge_manager.start()
         if self.task_manager: self.task_manager.check_and_update_slssteam_silent()
 
 
@@ -439,7 +436,6 @@ class MainWindow(QMainWindow):
             "update_manager",
             "cloud_save_manager",
             "system_integration",
-            "steam_bridge_manager",
             "discord_presence_manager",
             "audio_manager",
             "task_manager",
