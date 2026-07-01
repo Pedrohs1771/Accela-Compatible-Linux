@@ -37,6 +37,14 @@ def resolve_steam_library_path(
             continue
         return str(library)
 
+    current = candidate
+    while True:
+        if current.name.lower() == "steamapps":
+            return str(current.parent)
+        if current.parent == current:
+            break
+        current = current.parent
+
     if candidate.name.lower() == "common" and candidate.parent.name.lower() == "steamapps":
         return str(candidate.parent.parent)
     if candidate.name.lower() == "steamapps":

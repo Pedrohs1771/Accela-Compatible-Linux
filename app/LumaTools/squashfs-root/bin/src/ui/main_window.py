@@ -8,6 +8,7 @@ from typing import Dict, Optional, cast
 from PyQt6.QtCore import Qt, QTimer, QSize, QMetaObject, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
+    QColor,
     QIcon,
     QKeySequence,
     QMouseEvent,
@@ -134,7 +135,8 @@ class MainWindow(QMainWindow):
         self.setObjectName("lumatools")
         self.setWindowTitle("LumaTools")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(820, 640)
+        self.resize(920, 700)
         self.setAcceptDrops(True)
         icon_path = Paths.resource("logo/icon.png")
         if icon_path.exists(): self.setWindowIcon(QIcon(str(icon_path)))
@@ -157,27 +159,66 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self) -> None:
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("central_widget")
+        self.central_widget.setAutoFillBackground(True)
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
         self.content_frame = QFrame()
+        self.content_frame.setObjectName("content_frame")
+        self.content_frame.setAutoFillBackground(True)
+        self.content_frame.setFrameShape(QFrame.Shape.NoFrame)
         self.content_layout = QVBoxLayout(self.content_frame)
+        self.content_layout.setContentsMargins(28, 22, 28, 16)
+        self.content_layout.setSpacing(10)
         
         self.drop_zone_container = QWidget()
+        self.drop_zone_container.setObjectName("drop_zone_container")
+        self.drop_zone_container.setAutoFillBackground(True)
+        self.drop_zone_container.setMinimumHeight(382)
+        self.drop_zone_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self.drop_zone_layout = QVBoxLayout(self.drop_zone_container)
-        self.drop_zone_gif = QLabel()
+        self.drop_zone_layout.setContentsMargins(18, 12, 18, 12)
+        self.drop_zone_layout.setSpacing(8)
+        self.drop_zone_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        from components.custom_widgets import ScaledLabel
+        self.drop_zone_gif = ScaledLabel()
+        self.drop_zone_gif.setObjectName("drop_zone_gif")
         self.drop_zone_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.drop_zone_layout.addWidget(self.drop_zone_gif)
+        self.drop_zone_gif.setMinimumSize(400, 300)
+        self.drop_zone_gif.setMaximumSize(500, 375)
+        self.drop_zone_gif.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.drop_zone_layout.addWidget(
+            self.drop_zone_gif,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
+        )
         
         self.drop_text_label = QLabel("Arraste e solte o ZIP aqui")
+        self.drop_text_label.setObjectName("drop_text_label")
         self.drop_text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_text_label.setMinimumHeight(32)
+        self.drop_text_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self.drop_zone_layout.addWidget(self.drop_text_label)
-        self.content_layout.addWidget(self.drop_zone_container)
+        self.content_layout.addWidget(self.drop_zone_container, 1)
 
         self.progress_container = QWidget()
+        self.progress_container.setObjectName("progress_container")
+        self.progress_container.setAutoFillBackground(True)
         self.progress_layout = QVBoxLayout(self.progress_container)
+        self.progress_layout.setContentsMargins(0, 0, 0, 0)
+        self.progress_layout.setSpacing(4)
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_layout.addWidget(self.progress_bar)
@@ -193,10 +234,36 @@ class MainWindow(QMainWindow):
                 self.ui_state.queue_widget.setVisible(False)
                 self.content_layout.addWidget(self.ui_state.queue_widget)
 
+        self.activity_header = QWidget()
+        self.activity_header.setObjectName("activity_header")
+        self.activity_header_layout = QHBoxLayout(self.activity_header)
+        self.activity_header_layout.setContentsMargins(2, 0, 2, 0)
+        self.activity_header_layout.setSpacing(8)
+        self.activity_label = QLabel("ATIVIDADE")
+        self.activity_label.setObjectName("activity_label")
+        self.activity_status_label = QLabel("PRONTO")
+        self.activity_status_label.setObjectName("activity_status_label")
+        self.activity_status_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.activity_header_layout.addWidget(self.activity_label)
+        self.activity_header_layout.addStretch(1)
+        self.activity_header_layout.addWidget(self.activity_status_label)
+        self.content_layout.addWidget(self.activity_header)
+
         self.log_output = QTextEdit()
+        self.log_output.setObjectName("log_output")
         self.log_output.setReadOnly(True)
-        self.log_output.setStyleSheet("background-color: #000; border: none;")
-        self.content_layout.addWidget(self.log_output)
+        self.log_output.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.log_output.document().setMaximumBlockCount(800)
+        self.log_output.setMinimumHeight(128)
+        self.log_output.setMaximumHeight(210)
+        self.log_output.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.log_output.setStyleSheet(
+            "background-color: #000000; color: #C06C84; border: none;"
+        )
+        self.content_layout.addWidget(self.log_output, 0)
         
         self.main_layout.addWidget(self.content_frame)
         self.bottom_titlebar = BottomTitleBar(self)
@@ -205,10 +272,25 @@ class MainWindow(QMainWindow):
         qt_log_handler.message_logged.connect(self.log_output.append)
 
     def update_progress_bar_style(self):
-        self.progress_bar.setStyleSheet(f"""
-            QProgressBar {{ border: 1px solid {self.accent_color}; border-radius: 2px; text-align: center; color: white; }}
-            QProgressBar::chunk {{ background-color: {self.accent_color}; }}
-        """)
+        accent = QColor(self.accent_color)
+        border = f"rgba({accent.red()}, {accent.green()}, {accent.blue()}, 120)"
+        self.progress_bar.setStyleSheet(
+            f"""
+            QProgressBar {{
+                min-height: 8px;
+                max-height: 8px;
+                background-color: rgba(255, 255, 255, 10);
+                border: 1px solid {border};
+                border-radius: 3px;
+                color: transparent;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background-color: {self.accent_color};
+                border-radius: 2px;
+            }}
+            """
+        )
 
     def _setup_system_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -412,6 +494,13 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str)
     def add_job_safely(self, path):
         self.job_queue.add_job(path)
+
+    @pyqtSlot()
+    def reload_gifs_after_processing(self):
+        if self.ui_state:
+            self.ui_state.reload_movies()
+        if self.bottom_titlebar:
+            self.bottom_titlebar.reload_navi_animation(force=True)
 
     def _handle_steam_closed(self):
         if self.settings.value("close_with_steam", False, type=bool): self.request_quit("steam_closed")

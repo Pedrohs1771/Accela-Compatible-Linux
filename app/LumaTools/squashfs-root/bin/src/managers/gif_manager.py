@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QMetaObject, Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -26,6 +26,8 @@ from utils.helpers import get_base_path
 from utils.paths import Paths
 
 logger = logging.getLogger(__name__)
+
+GIF_CACHE_VERSION = "preserve-luminance-v2"
 
 
 class ProgressDialog(QDialog):
@@ -173,6 +175,7 @@ class GIFManager:
 
             if not regeneration_needed:
                 logger.info("All GIFs are up to date, updating symlinks only.")
+                self._update_processor_version(color_subdir)
                 self._update_color_symlinks(gif_list, color_subdir, output_dir)
                 self._finish_processing()
                 return
@@ -229,11 +232,18 @@ class GIFManager:
 
             self._write_hashes_file(color_subdir)
             self._update_disable_color_gifs_setting(color_subdir)
+            self._update_processor_version(color_subdir)
             self._update_color_symlinks(gif_list, color_subdir, output_dir)
             self.regenerate_anyway = False
 
-            if self.main_window and hasattr(self.main_window, "ui_state"):
-                QTimer.singleShot(0, self.main_window.ui_state.reload_movies)
+            if self.main_window and hasattr(
+                self.main_window, "reload_gifs_after_processing"
+            ):
+                QMetaObject.invokeMethod(
+                    self.main_window,
+                    "reload_gifs_after_processing",
+                    Qt.ConnectionType.QueuedConnection,
+                )
         except Exception as e:
             logger.error(f"Error during silent GIF processing: {e}")
         finally:
@@ -278,6 +288,7 @@ class GIFManager:
 
             # Update the disable_color_gifs setting file after processing
             self._update_disable_color_gifs_setting(color_subdir)
+            self._update_processor_version(color_subdir)
 
             self._update_color_symlinks(gif_list, color_subdir, output_dir)
 
@@ -595,7 +606,9 @@ class GIFManager:
 
         # Check if we need to regenerate
         if output_path.exists():
-            source_hash = self._calculate_gif_hash(input_path)
+            source_hash = self._calculate_cache_hash(
+                input_path, disable_color_gifs
+            )
             existing_hash = _get_stored_hash(output_dir, gif_name)
 
             if source_hash and existing_hash and source_hash == existing_hash:
@@ -615,8 +628,16 @@ class GIFManager:
         Apply color transformation to GIF (only used if disable_color_gifs=False)
         """
         start_time = time.time()
+        temp_output_path = output_path.with_name(
+            f".{output_path.stem}.tmp{output_path.suffix}"
+        )
 
         try:
+            try:
+                temp_output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
             # Parse target color
             target_rgb = tuple(
                 int(accent_color.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4)
@@ -624,7 +645,57 @@ class GIFManager:
             target_h, target_s, target_v = self._rgb_to_hsv(*target_rgb)
 
             with Image.open(input_path) as gif:
-                # Extract all frames
+                # Optimized palette-based colorization for P mode GIFs
+                if gif.mode == "P" and gif.getpalette():
+                    frames = []
+                    frame_durations = []
+                    transparencies = []
+                    disposals = []
+                    try:
+                        while True:
+                            frame = gif.copy()
+                            palette = frame.getpalette()
+                            if palette:
+                                new_palette = self._apply_color_to_palette(
+                                    palette, target_h, target_s, target_v
+                                )
+                                frame.putpalette(new_palette)
+                            frames.append(frame)
+                            frame_durations.append(gif.info.get("duration", 100))
+                            transparencies.append(gif.info.get("transparency"))
+                            disposals.append(gif.info.get("disposal", 2))
+                            gif.seek(gif.tell() + 1)
+                    except EOFError:
+                        pass
+
+                    if frames:
+                        save_args = {
+                            "save_all": True,
+                            "append_images": frames[1:],
+                            "duration": frame_durations,
+                            "loop": gif.info.get("loop", 0),
+                            "optimize": True,
+                            "disposal": disposals,
+                        }
+                        if transparencies[0] is not None:
+                            save_args["transparency"] = transparencies[0]
+                        frames[0].save(temp_output_path, **save_args)
+                        os.replace(temp_output_path, output_path)
+
+                        # Store hash for this GIF in temporary storage
+                        self._store_temp_hash(
+                            gif_name,
+                            input_path,
+                            output_path.parent,
+                            disable_color_gifs=False,
+                        )
+
+                        elapsed = time.time() - start_time
+                        if elapsed > 0.5:
+                            logger.debug(f"Colorized palette of {input_path.name}: {elapsed:.3f}s")
+                        return True
+
+                # Fallback to slower/lossy RGBA conversion if not in P mode
                 frames = []
                 frame_durations = []
                 original_info = gif.info.copy()
@@ -645,11 +716,17 @@ class GIFManager:
                 )
 
                 self._save_gif(
-                    processed_frames, frame_durations, original_info, output_path
+                    processed_frames, frame_durations, original_info, temp_output_path
                 )
+                os.replace(temp_output_path, output_path)
 
                 # Store hash for this GIF in temporary storage
-                self._store_temp_hash(gif_name, input_path, output_path.parent)
+                self._store_temp_hash(
+                    gif_name,
+                    input_path,
+                    output_path.parent,
+                    disable_color_gifs=False,
+                )
 
                 elapsed = time.time() - start_time
                 if elapsed > 0.5:
@@ -661,7 +738,8 @@ class GIFManager:
             logger.error(f"Error processing {input_path}: {e}")
             # Fallback: copy original
             try:
-                shutil.copy2(input_path, output_path)
+                shutil.copy2(input_path, temp_output_path)
+                os.replace(temp_output_path, output_path)
                 logger.info(f"Fallback copy created for: {input_path.name}")
                 return True
             except (OSError, shutil.Error) as copy_error:
@@ -669,19 +747,33 @@ class GIFManager:
                     f"Fallback copy also failed for {input_path}: {copy_error}"
                 )
                 return False
+        finally:
+            try:
+                temp_output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _copy_gif_directly(self, input_path, output_path, gif_name):
         """
         Simply copy GIF file from source to destination (only used if disable_color_gifs=True)
         """
         start_time = time.time()
+        temp_output_path = output_path.with_name(
+            f".{output_path.stem}.tmp{output_path.suffix}"
+        )
 
         try:
             # Copy the file
-            shutil.copy2(input_path, output_path)
+            shutil.copy2(input_path, temp_output_path)
+            os.replace(temp_output_path, output_path)
 
             # Store hash for caching
-            self._store_temp_hash(gif_name, input_path, output_path.parent)
+            self._store_temp_hash(
+                gif_name,
+                input_path,
+                output_path.parent,
+                disable_color_gifs=True,
+            )
 
             elapsed = time.time() - start_time
             if elapsed > 0.5:
@@ -692,6 +784,11 @@ class GIFManager:
         except Exception as e:
             logger.error(f"Error copying {input_path}: {e}")
             return False
+        finally:
+            try:
+                temp_output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _load_hashes(output_dir):
@@ -725,18 +822,24 @@ class GIFManager:
                         except Exception as e:
                             logger.warning(f"Could not read hash for {gif_name}: {e}")
 
-            # Write final hashes.json
-            with open(hashes_path, "w") as f:
+            # Publish cache metadata atomically so readers never observe partial JSON.
+            temp_hashes_path = hashes_path.with_name(f".{hashes_path.name}.tmp")
+            with open(temp_hashes_path, "w") as f:
                 json.dump(final_hashes, f, indent=2)
+            os.replace(temp_hashes_path, hashes_path)
             logger.info(f"Saved {len(final_hashes)} hashes to {hashes_path}")
 
         except Exception as e:
             logger.error(f"Could not write hashes.json: {e}")
 
-    def _store_temp_hash(self, gif_name, input_path, output_dir):
+    def _store_temp_hash(
+        self, gif_name, input_path, output_dir, *, disable_color_gifs
+    ):
         """Store hash temporarily in individual files to avoid read/write conflicts"""
         try:
-            source_hash = self._calculate_gif_hash(input_path)
+            source_hash = self._calculate_cache_hash(
+                input_path, disable_color_gifs
+            )
             if source_hash:
                 hash_file = output_dir / f".{gif_name}.hash"
                 with open(hash_file, "w") as f:
@@ -757,6 +860,15 @@ class GIFManager:
             logger.error(f"Error calculating hash for {file_path}: {e}")
             return None
 
+    @staticmethod
+    def _calculate_cache_hash(file_path, disable_color_gifs):
+        """Include processing behavior in the cache key."""
+        source_hash = GIFManager._calculate_gif_hash(file_path)
+        if not source_hash:
+            return None
+        mode = "copy-v1" if disable_color_gifs else GIF_CACHE_VERSION
+        return hashlib.sha256(f"{source_hash}:{mode}".encode("utf-8")).hexdigest()
+
     def _should_regenerate_gif(
         self, input_path, output_path, gif_name, existing_hashes
     ):
@@ -776,7 +888,9 @@ class GIFManager:
                 f"Detected that {input_path} doesn't exist, but won't do anything about it"
             )
 
-        current_hash = self._calculate_gif_hash(input_path)
+        current_hash = self._calculate_cache_hash(
+            input_path, self.disable_color_gifs
+        )
         if not current_hash:
             logger.info(
                 f"GIFs need regeneration: {input_path}/{gif_name} -> {output_path}/{gif_name} because the hash doesn't exist"
@@ -797,6 +911,38 @@ class GIFManager:
             return True
 
         return False
+
+    def _apply_color_to_palette(self, palette_list, target_h, target_s, target_v):
+        """Apply color transformation to GIF palette directly"""
+        palette_array = np.array(palette_list, dtype=np.float32).reshape(-1, 3)
+        r, g, b = palette_array[:, 0], palette_array[:, 1], palette_array[:, 2]
+
+        rgb_mean = (r + g + b) / 3.0
+        rgb_std = np.sqrt(
+            ((r - rgb_mean) ** 2 + (g - rgb_mean) ** 2 + (b - rgb_mean) ** 2) / 3.0
+        )
+
+        colored_mask = rgb_std > 5
+
+        if not np.any(colored_mask):
+            return palette_list
+
+        colored_pixels = palette_array[colored_mask]
+        colored_hsv = self._rgb_to_hsv_batch(colored_pixels)
+
+        # Recolor every frame using the same rule. Keeping the original value
+        # channel avoids the bright first-frame flash caused by per-frame
+        # brightness normalization.
+        new_h = np.full(colored_hsv.shape[0], target_h)
+        new_s = np.clip(colored_hsv[:, 1] * 0.7 + target_s * 0.3, 0.0, 1.0)
+        new_v = colored_hsv[:, 2]
+
+        new_rgb = self._hsv_to_rgb_batch(new_h, new_s, new_v)
+
+        result_palette = palette_array.copy()
+        result_palette[colored_mask] = new_rgb
+
+        return result_palette.astype(np.uint8).flatten().tolist()
 
     def _process_frames(self, frames, target_h, target_s, target_v):
         """Process all frames with color transformation"""
@@ -842,18 +988,10 @@ class GIFManager:
         # Convert colored RGB to HSV
         colored_hsv = self._rgb_to_hsv_batch(colored_rgb)
 
-        # Calculate average saturation and value
-        avg_s = np.mean(colored_hsv[:, 1])
-        avg_v = np.mean(colored_hsv[:, 2])
-
-        # Avoid division by zero
-        avg_s = max(float(avg_s), 0.001)
-        avg_v = max(float(avg_v), 0.001)
-
         # Apply transformations
         new_h = np.full(colored_hsv.shape[0], target_h)
-        new_s = np.clip(colored_hsv[:, 1] * (target_s / avg_s), 0.0, 1.0)
-        new_v = np.clip(colored_hsv[:, 2] * (target_v / avg_v), 0.0, 1.0)
+        new_s = np.clip(colored_hsv[:, 1] * 0.7 + target_s * 0.3, 0.0, 1.0)
+        new_v = colored_hsv[:, 2]
 
         # Convert back to RGB
         new_rgb = self._hsv_to_rgb_batch(new_h, new_s, new_v)
@@ -1012,8 +1150,23 @@ class GIFManager:
             logger.debug("Could not update GIF preset marker: %s", exc)
 
     @staticmethod
+    def _update_processor_version(color_subdir):
+        marker_path = color_subdir / "gif_processor_version.txt"
+        temp_path = marker_path.with_name(f".{marker_path.name}.tmp")
+        try:
+            temp_path.write_text(GIF_CACHE_VERSION, encoding="utf-8")
+            os.replace(temp_path, marker_path)
+        except OSError as exc:
+            logger.debug("Could not update GIF processor marker: %s", exc)
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
     def _create_color_symlink(symlink_path, target_path):
         """Create symlink pointing to colorized file"""
+        temp_path = symlink_path.with_name(f".{symlink_path.name}.tmp")
         try:
             if symlink_path.exists():
                 try:
@@ -1022,12 +1175,10 @@ class GIFManager:
                 except OSError:
                     pass
 
-            if symlink_path.exists() or symlink_path.is_symlink():
-                symlink_path.unlink()
-
-            # Create relative symlink
+            temp_path.unlink(missing_ok=True)
             target_rel = os.path.relpath(target_path, symlink_path.parent)
-            symlink_path.symlink_to(target_rel)
+            temp_path.symlink_to(target_rel)
+            os.replace(temp_path, symlink_path)
             return True
         except Exception as e:
             logger.warning(f"Symlink failed for {symlink_path.name}: {e}")
@@ -1042,6 +1193,11 @@ class GIFManager:
             except (OSError, shutil.Error) as copy_error:
                 logger.error(f"File copy also failed: {copy_error}")
                 return False
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _find_gif_source(input_dirs, gif_name):
@@ -1062,4 +1218,4 @@ def _get_stored_hash(output_dir, gif_name):
                 return f.read().strip()
         except Exception:
             pass
-    return None
+    return GIFManager._load_hashes(output_dir).get(gif_name)

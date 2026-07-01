@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 
 from utils.helpers import get_base_path
+from utils.paths import Paths
 from utils.settings import get_settings
 from utils.version import app_version
 from .assets import (
@@ -55,10 +56,12 @@ class BottomTitleBar(QFrame):
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
+        self.setObjectName("bottom_titlebar")
         self.parent_window = parent
         self.drag_pos = None
-        self.setFixedHeight(36)
+        self.setFixedHeight(42)
         self.no_previous_state = True
+        self._navi_movie_path: Optional[str] = None
 
         self.navi_label: Optional[QLabel] = None
         self.navi_movie: Optional[QMovie] = None
@@ -84,8 +87,8 @@ class BottomTitleBar(QFrame):
     def _setup_ui(self) -> None:
         """Setup the layout and widgets."""
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 0, 5, 0)
-        layout.setSpacing(5)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(6)
 
         left_widget = self._create_left_section()
         right_widget = self._create_right_section()
@@ -124,27 +127,56 @@ class BottomTitleBar(QFrame):
     def _setup_navi_animation(self, layout: QHBoxLayout) -> None:
         """Setup the Navi GIF animation."""
         self.navi_label = QLabel()
-        gif_path = get_base_path() / "gifs/colorized/navi.gif"
-        self.navi_movie = QMovie(str(gif_path))
+        self.navi_label.setFixedHeight(22)
+        self.navi_label.setScaledContents(True)
+        layout.addWidget(self.navi_label, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.reload_navi_animation()
 
-        if not self.navi_movie.isValid():
+    def reload_navi_animation(self, force: bool = False) -> None:
+        if self.navi_label is None:
             return
 
-        self.navi_movie.jumpToFrame(0)
-        orig_size = self.navi_movie.currentImage().size()
-        height = 20
+        gif_path = get_base_path() / "gifs/colorized/navi.gif"
+        if not gif_path.exists():
+            gif_path = Paths.resource("gif/navi.gif")
+        try:
+            movie_path = str(gif_path.resolve())
+        except OSError:
+            movie_path = str(gif_path)
+
+        if (
+            not force
+            and self._navi_movie_path == movie_path
+            and self.navi_movie
+            and self.navi_movie.isValid()
+        ):
+            if self.navi_movie.state() != QMovie.MovieState.Running:
+                self.navi_movie.start()
+            return
+
+        movie = QMovie(movie_path)
+        movie.setCacheMode(QMovie.CacheMode.CacheAll)
+
+        if not movie.isValid():
+            return
+
+        movie.jumpToFrame(0)
+        orig_size = movie.currentImage().size()
+        height = 22
         width = (
             int(height * (orig_size.width() / orig_size.height()))
             if orig_size.height() > 0
-            else 57
+            else 62
         )
 
         self.navi_label.setFixedSize(width, height)
-        self.navi_label.setScaledContents(True)
-        self.navi_label.setMovie(self.navi_movie)
-        self.navi_movie.start()
-
-        layout.addWidget(self.navi_label, alignment=Qt.AlignmentFlag.AlignLeft)
+        previous_movie = self.navi_movie
+        self.navi_movie = movie
+        self._navi_movie_path = movie_path
+        self.navi_label.setMovie(movie)
+        movie.start()
+        if previous_movie and previous_movie is not movie:
+            previous_movie.stop()
 
     def _create_right_section(self) -> QWidget:
         """Create the right section containing buttons."""
@@ -229,24 +261,34 @@ class BottomTitleBar(QFrame):
         settings = get_settings()
         bg_color = settings.value("background_color", "#000000")
         accent_color = settings.value("accent_color", "#C06C84")
+        background = QColor(bg_color)
+        accent = QColor(accent_color)
+        surface = (
+            QColor("#08080B")
+            if background.lightness() < 24
+            else background.lighter(106)
+        )
+        border = f"rgba({accent.red()}, {accent.green()}, {accent.blue()}, 72)"
 
         self.setStyleSheet(
             f"""
-            QFrame {{
-                background-color: {bg_color};
+            QFrame#bottom_titlebar {{
+                background-color: {surface.name()};
+                border-top: 1px solid {border};
             }}
             QToolTip {{
                 color: {accent_color};
-                background-color: {bg_color};
+                background-color: {surface.name()};
                 border: 1px solid {accent_color};
-                padding: 2px;
+                padding: 5px;
             }}
         """
         )
 
         if self.title_label:
             self.title_label.setStyleSheet(
-                f"color: {accent_color}; font-size: 15pt; font-weight: 700;"
+                f"color: {accent_color}; font-size: 13pt; font-weight: 700; "
+                "letter-spacing: 0px;"
             )
 
     def update_style(self) -> None:
@@ -405,7 +447,7 @@ class BottomTitleBar(QFrame):
             pixmap = self._build_svg_pixmap(svg_data, accent_color)
             button.setIcon(QIcon(pixmap))
             button.setIconSize(pixmap.size())
-            button.setFixedSize(22, 22)
+            button.setFixedSize(26, 26)
 
             if on_click:
                 button.clicked.connect(on_click)
@@ -435,13 +477,13 @@ class BottomTitleBar(QFrame):
         accent_color = settings.value("accent_color", "#C06C84")
         bg_color = QColor(settings.value("background_color", "#000000"))
         hover_color = bg_color.lighter(130).name() if bg_color != QColor("#000000") else "#202020"
-        button.setFixedSize(24, 24)
+        button.setFixedSize(28, 28)
         button.setStyleSheet(
             f"""
             QPushButton {{
                 background-color: transparent;
                 border: 1px solid {accent_color};
-                border-radius: 12px;
+                border-radius: 14px;
                 padding: 1px;
             }}
             QPushButton:hover {{

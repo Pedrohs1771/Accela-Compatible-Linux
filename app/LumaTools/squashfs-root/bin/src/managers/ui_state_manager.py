@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import cast
 from PyQt6.QtCore import QSize, QTimer
-from PyQt6.QtGui import QMovie, QFont
+from PyQt6.QtGui import QColor, QMovie, QFont
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.visual_presets import get_visual_preset
+from managers.gif_manager import GIF_CACHE_VERSION
 from utils.helpers import get_base_path
 from utils.paths import Paths
 
@@ -66,6 +67,7 @@ class UIStateManager:
         self.random_gif_path = None
         self.download_movie = None
         self.main_movie = None
+        self.current_movie_path = None
 
         # Queue UI elements
         self.queue_widget = None
@@ -90,10 +92,10 @@ class UIStateManager:
         return geometry.height() <= 800 or geometry.width() <= 1280
 
     def _apply_movie_size(self, movie: QMovie) -> None:
-        if not movie or not movie.isValid():
-            return
-        if self._is_compact_screen():
-            movie.setScaledSize(QSize(220, 220))
+        # We don't scale the QMovie object itself because Qt's internal movie scaling
+        # results in pixelated/low-quality rendering. The ScaledLabel widget handles
+        # smooth scaling on every frame draw instead.
+        pass
 
     def _initialize_gifs(self):
         """Initialize GIF resources"""
@@ -239,13 +241,97 @@ class UIStateManager:
         )
         return {"removed": total_removed, "renamed": total_renamed}
 
+    def _current_colorized_dir(self) -> Path:
+        return get_base_path() / "gifs" / "colorized" / self.main_window.accent_color.lstrip("#")
+
+    def _colorized_cache_ready(self) -> bool:
+        colored_dir = get_base_path() / "gifs" / "colorized"
+        main_link = colored_dir / "main.gif"
+        expected_dir = self._current_colorized_dir()
+        if not main_link.exists() or not expected_dir.exists():
+            return False
+        if not colorized_cache_matches_visual_preset(self.settings, colored_dir):
+            return False
+
+        try:
+            if main_link.resolve().parent != expected_dir.resolve():
+                return False
+        except OSError:
+            return False
+
+        setting_file = expected_dir / "disable_color_gifs_setting.txt"
+        try:
+            previous = setting_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        expected = "1" if bool(self.main_window.gif_manager.disable_color_gifs) else "0"
+        try:
+            processor_version = (
+                expected_dir / "gif_processor_version.txt"
+            ).read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        return (
+            previous == expected
+            and processor_version == GIF_CACHE_VERSION
+            and (expected_dir / "hashes.json").exists()
+        )
+
+    def _preferred_main_gif_path(self) -> Path:
+        colored_dir = get_base_path() / "gifs" / "colorized"
+        main_gif_path = colored_dir / "main.gif"
+        preset_gif_dir = resolve_visual_preset_gif_dir(self.settings)
+        default_gif_path = preset_gif_dir / "main.gif"
+        if not default_gif_path.exists():
+            default_gif_path = Paths.resource("gif/main.gif")
+
+        ui_mode = self.settings.value("ui_mode", "default")
+        if ui_mode == "sonic":
+            sonic_gif = Paths.resource("sonic/gifs/main.gif")
+            return sonic_gif if sonic_gif.exists() else default_gif_path
+
+        if self._colorized_cache_ready() and main_gif_path.exists():
+            return main_gif_path
+        return default_gif_path
+
+    def _set_movie(self, movie_path: Path, *, force: bool = False) -> None:
+        movie_path = movie_path.resolve()
+        movie_key = str(movie_path)
+        if (
+            not force
+            and self.current_movie_path == movie_key
+            and self.current_movie
+            and self.current_movie.isValid()
+        ):
+            if self.current_movie.state() != QMovie.MovieState.Running:
+                self.current_movie.start()
+            return
+
+        movie = QMovie(movie_key)
+        movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        self._apply_movie_size(movie)
+        if not movie.isValid():
+            logger.error("Failed to load GIF: %s", movie_key)
+            return
+
+        previous_movie = self.current_movie
+        self.main_window.drop_zone_gif.setMovie(movie)
+        movie.start()
+
+        self.main_movie = movie
+        self.current_movie = movie
+        self.current_movie_path = movie_key
+        if previous_movie and previous_movie is not movie:
+            previous_movie.stop()
+
     def _update_gifs(self):
         """Update GIFs with current accent color"""
         output_dir = get_base_path() / "gifs" / "colorized"
         self.main_window.gif_manager.process_gif_batch(
             output_dir, self.main_window.accent_color, silent=True
         )
-        self._reload_movies()
+        if not self.main_window.gif_manager._is_processing:
+            self._reload_movies(force=True)
 
     def _schedule_gif_refresh(self, delay_ms=350):
         timer = self._gif_refresh_timer
@@ -256,59 +342,28 @@ class UIStateManager:
             self._gif_refresh_timer = timer
         timer.start(max(0, delay_ms))
 
-    def update_gifs(self):
-        # Reload visuals immediately with the current available files, then
-        # refresh colorized GIFs shortly after startup so the window becomes
-        # responsive faster on slow machines.
-        self._reload_movies()
-        self._schedule_gif_refresh(600)
+    def update_gifs(self, force: bool = False):
+        # Keep the currently running QMovie alive whenever possible. Rebuilding
+        # it at startup restarts the animation and creates a visible blink.
+        self._reload_movies(force=force)
+        if force or self.main_window.gif_manager.regenerate_anyway or not self._colorized_cache_ready():
+            self._schedule_gif_refresh(600)
 
-    def _reload_movies(self):
+    def _reload_movies(self, force: bool = False):
         """Reload movie objects with current GIFs"""
         if not hasattr(self.main_window, "drop_zone_gif"):
             return
-        colored_dir = get_base_path() / "gifs/colorized"
-        main_gif_path = colored_dir / "main.gif"
-        preset_gif_dir = resolve_visual_preset_gif_dir(self.settings)
-        default_gif_path = preset_gif_dir / "main.gif"
-        if not default_gif_path.exists():
-            default_gif_path = Paths.resource("gif/main.gif")
-
-        ui_mode = self.settings.value("ui_mode", "default")
-        sonic_main_applied = False
-        if ui_mode == "sonic":
-            sonic_gif = Paths.resource("sonic/gifs/main.gif")
-            default_gif_path = sonic_gif
-            sonic_main_applied = True
-
-        if hasattr(self.main_movie, "main_movie"):
-            if self.main_movie:
-                self.main_movie.stop()
-
-        self.main_movie = QMovie(str(default_gif_path))
-        self._apply_movie_size(self.main_movie)
-        self.main_movie.start()
-        self.main_window.drop_zone_gif.setMovie(self.main_movie)
-        self.current_movie = self.main_movie
-
-        if (
-            main_gif_path.exists()
-            and not sonic_main_applied
-            and colorized_cache_matches_visual_preset(self.settings, colored_dir)
-        ):
-            self.main_movie.stop()
-            self.main_movie = QMovie(str(main_gif_path))
-            self._apply_movie_size(self.main_movie)
-            self.main_window.drop_zone_gif.setMovie(self.main_movie)
-            self.main_movie.start()
-            self.current_movie = self.main_movie
-
         if self.main_window.task_manager.current_job:
+            if force:
+                self.main_movie = None
             self.switch_to_download_gif()
+            return
+
+        self._set_movie(self._preferred_main_gif_path(), force=force)
 
     def reload_movies(self):
         self._initialize_gifs()
-        self._reload_movies()
+        self._reload_movies(force=True)
 
     def setup_queue_panel(self):
         """Setup the download queue panel"""
@@ -425,19 +480,92 @@ class UIStateManager:
         # Apply styles to various UI elements
         self._apply_background_color()
         self._apply_accent_color()
-        self._update_gifs()
+        self.update_gifs()
 
     def _apply_background_color(self):
         """Apply background color to main content"""
-        main_frame = self.main_window.central_widget.findChild(QFrame)
-        if main_frame:
-            main_frame.setStyleSheet(
-                f"background-color: {self.main_window.background_color};"
+        background = self.main_window.background_color
+        accent = self.main_window.accent_color
+        background_color = QColor(background)
+        accent_color = QColor(accent)
+        if not background_color.isValid():
+            background_color = QColor("#000000")
+        if not accent_color.isValid():
+            accent_color = QColor("#C06C84")
+
+        surface_color = (
+            QColor("#0B0B0E")
+            if background_color.lightness() < 24
+            else background_color.lighter(108)
+        )
+        border = (
+            f"rgba({accent_color.red()}, {accent_color.green()}, "
+            f"{accent_color.blue()}, 72)"
+        )
+        muted = (
+            f"rgba({accent_color.red()}, {accent_color.green()}, "
+            f"{accent_color.blue()}, 150)"
+        )
+
+        for widget_name in ("content_frame", "progress_container"):
+            widget = getattr(self.main_window, widget_name, None)
+            if widget is not None:
+                widget.setStyleSheet(f"background-color: {background};")
+
+        self.main_window.central_widget.setStyleSheet(
+            f"#central_widget {{ background-color: {background}; "
+            f"border: 1px solid {border}; }}"
+        )
+        self.main_window.drop_zone_container.setStyleSheet(
+            "#drop_zone_container { "
+            f"background-color: {surface_color.name()}; "
+            f"border: 1px solid {border}; "
+            "border-radius: 6px; "
+            "}"
+        )
+        if hasattr(self.main_window, "activity_header"):
+            self.main_window.activity_header.setStyleSheet(
+                "#activity_header { background-color: transparent; border: none; }"
+            )
+
+        if hasattr(self.main_window, "drop_zone_gif"):
+            self.main_window.drop_zone_gif.setProperty(
+                "background_color", surface_color.name()
+            )
+            self.main_window.drop_zone_gif.setStyleSheet(
+                f"background-color: {surface_color.name()}; border: none;"
+            )
+            self.main_window.drop_zone_gif.update()
+        if hasattr(self.main_window, "log_output"):
+            self.main_window.log_output.setStyleSheet(
+                "QTextEdit { "
+                f"background-color: {surface_color.name()}; "
+                f"color: {accent}; "
+                f"selection-background-color: {accent}; "
+                f"selection-color: {background}; "
+                f"border: 1px solid {border}; "
+                "border-radius: 4px; "
+                "padding: 8px 10px; "
+                "font-size: 10pt; "
+                "font-family: 'DejaVu Sans Mono'; "
+                "}"
+                "QScrollBar:vertical { "
+                f"background: {surface_color.name()}; width: 8px; margin: 2px; "
+                "}"
+                "QScrollBar::handle:vertical { "
+                f"background: {muted}; min-height: 24px; border-radius: 3px; "
+                "}"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { "
+                "height: 0px; "
+                "}"
             )
 
     def _apply_accent_color(self):
         """Apply accent color to UI elements"""
-        accent_style = f"color: {self.main_window.accent_color}; font-size: 12pt;"
+        accent_style = (
+            f"color: {self.main_window.accent_color}; font-size: 12pt; "
+            "font-weight: 600; letter-spacing: 0px;"
+        )
 
         # Drop text label
         self.main_window.drop_text_label.setStyleSheet(accent_style)
@@ -451,10 +579,15 @@ class UIStateManager:
         # Progress bar
         self.main_window.update_progress_bar_style()
 
-        # Log output
-        self.main_window.log_output.setStyleSheet(
-            f"color: {self.main_window.accent_color}; font-size: 12pt; font-family: 'DejaVu Sans Mono';"
-        )
+        if hasattr(self.main_window, "activity_label"):
+            self.main_window.activity_label.setStyleSheet(
+                f"color: {self.main_window.accent_color}; font-size: 9pt; "
+                "font-weight: 700; letter-spacing: 0px;"
+            )
+            self.main_window.activity_status_label.setStyleSheet(
+                f"color: {self.main_window.accent_color}; font-size: 9pt; "
+                "font-weight: 600; letter-spacing: 0px;"
+            )
 
         # Bottom titlebar
         if hasattr(self.main_window, "bottom_titlebar"):
@@ -466,6 +599,8 @@ class UIStateManager:
             if self.queue_widget:
                 self.queue_widget.setVisible(False)
             self.main_window.drop_text_label.setText("Arraste e solte o ZIP aqui")
+            if hasattr(self.main_window, "activity_status_label"):
+                self.main_window.activity_status_label.setText("PRONTO")
             self._show_main_gif()
         else:
             if self.queue_widget:
@@ -474,17 +609,41 @@ class UIStateManager:
                 self.main_window.drop_text_label.setText(
                     "Fila parada. Pronta para o próximo trabalho."
                 )
+            if hasattr(self.main_window, "activity_status_label"):
+                self.main_window.activity_status_label.setText(
+                    "PROCESSANDO" if is_processing else "NA FILA"
+                )
 
     def _show_main_gif(self):
         """Show the main GIF animation"""
+        preferred_path = self._preferred_main_gif_path().resolve()
+        main_path = None
+        if self.main_movie:
+            try:
+                main_path = Path(self.main_movie.fileName()).resolve()
+            except OSError:
+                pass
+
         if (
-            self.current_movie != self.main_movie
-            and self.main_movie
-            and self.main_movie.isValid()
+            not self.main_movie
+            or not self.main_movie.isValid()
+            or main_path != preferred_path
         ):
-            self.main_window.drop_zone_gif.setMovie(self.main_movie)
-            self.main_movie.start()
-            self.current_movie = self.main_movie
+            self._set_movie(preferred_path, force=True)
+            return
+
+        if self.current_movie is self.main_movie:
+            if self.main_movie.state() != QMovie.MovieState.Running:
+                self.main_movie.start()
+            return
+
+        previous_movie = self.current_movie
+        self.main_window.drop_zone_gif.setMovie(self.main_movie)
+        self.main_movie.start()
+        self.current_movie = self.main_movie
+        self.current_movie_path = str(preferred_path)
+        if previous_movie and previous_movie is not self.main_movie:
+            previous_movie.stop()
 
     def show_main_gif(self):
         self._show_main_gif()
@@ -495,9 +654,6 @@ class UIStateManager:
         self.disable_default_gifs = self.settings.value(
             "disable_default_gifs", False, type=bool
         )
-
-        if self.current_movie:
-            self.current_movie.stop()
 
         colored_dir = get_base_path() / "gifs/colorized"
         os.makedirs(str(colored_dir), exist_ok=True)
@@ -552,15 +708,48 @@ class UIStateManager:
             self.main_window.drop_text_label.setText("Baixando...")
             return
 
-        # Select and load a random GIF
-        self.random_gif_path = random.choice(available_gifs)
-        self.download_movie = QMovie(self.random_gif_path)
-        self._apply_movie_size(self.download_movie)
+        resolved_gifs = []
+        for gif_path in available_gifs:
+            try:
+                path = Path(gif_path).resolve()
+            except OSError:
+                continue
+            if path.exists():
+                resolved_gifs.append(str(path))
 
-        if self.download_movie.isValid():
-            self.current_movie = self.download_movie
-            self.main_window.drop_zone_gif.setMovie(self.current_movie)
-            self.current_movie.start()
-        else:
-            logger.error(f"Failed to load GIF: {self.random_gif_path}")
+        if not resolved_gifs:
+            logger.error("No valid download GIFs available!")
             self.main_window.drop_text_label.setText("Baixando...")
+            return
+
+        # Queue refreshes can happen many times per second. Reuse the active
+        # download movie so its animation never jumps back to frame zero.
+        if (
+            self.current_movie is self.download_movie
+            and self.download_movie
+            and self.download_movie.isValid()
+            and self.random_gif_path in resolved_gifs
+        ):
+            if self.download_movie.state() != QMovie.MovieState.Running:
+                self.download_movie.start()
+            return
+
+        random_gif_path = random.choice(resolved_gifs)
+        download_movie = QMovie(random_gif_path)
+        download_movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        self._apply_movie_size(download_movie)
+
+        if not download_movie.isValid():
+            logger.error("Failed to load GIF: %s", random_gif_path)
+            self.main_window.drop_text_label.setText("Baixando...")
+            return
+
+        previous_movie = self.current_movie
+        self.random_gif_path = random_gif_path
+        self.download_movie = download_movie
+        self.current_movie = download_movie
+        self.current_movie_path = random_gif_path
+        self.main_window.drop_zone_gif.setMovie(download_movie)
+        download_movie.start()
+        if previous_movie and previous_movie is not download_movie:
+            previous_movie.stop()

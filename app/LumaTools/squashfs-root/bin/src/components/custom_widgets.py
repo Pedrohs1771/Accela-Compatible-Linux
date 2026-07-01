@@ -1,35 +1,51 @@
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt6.QtWidgets import QLabel, QPushButton
 
 
 class ScaledLabel(QLabel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setMinimumSize(1, 1)
         self._movie = None
 
     def setMovie(self, movie):
         if self._movie:
-            self._movie.frameChanged.disconnect(self.on_frame_changed)
+            try:
+                self._movie.frameChanged.disconnect(self.update)
+            except (TypeError, RuntimeError):
+                pass
         self._movie = movie
         if self._movie:
-            self._movie.frameChanged.connect(self.on_frame_changed)
+            self._movie.frameChanged.connect(self.update)
+            self.update()
 
-    def on_frame_changed(self):
-        if self.size().width() > 0 and self.size().height() > 0 and self._movie:
-            pixmap = self._movie.currentPixmap()
-            scaled_pixmap = pixmap.scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            super().setPixmap(scaled_pixmap)
-
-    def resizeEvent(self, event):
+    def paintEvent(self, event):
         if self._movie:
-            self.on_frame_changed()
-        super().resizeEvent(event)
+            painter = QPainter(self)
+            background = self.property("background_color")
+            if isinstance(background, str) and QColor(background).isValid():
+                fill_color = QColor(background)
+            else:
+                fill_color = self.palette().color(self.backgroundRole())
+            painter.fillRect(self.rect(), fill_color)
+            pixmap = self._movie.currentPixmap()
+            if not pixmap.isNull():
+                rect = self.rect()
+                scaled_size = pixmap.size()
+                scaled_size.scale(rect.size(), Qt.AspectRatioMode.KeepAspectRatio)
+                x = (rect.width() - scaled_size.width()) // 2
+                y = (rect.height() - scaled_size.height()) // 2
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                painter.drawPixmap(x, y, scaled_size.width(), scaled_size.height(), pixmap)
+            painter.end()
+        else:
+            super().paintEvent(event)
+
+    def sizeHint(self):
+        if self._movie:
+            return self._movie.frameRect().size()
+        return super().sizeHint()
+
 
 
 class ScaledFontLabel(QLabel):
