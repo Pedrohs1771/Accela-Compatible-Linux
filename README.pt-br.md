@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/Status-Experimental_Windows-orange?style=for-the-badge" alt="Status">
+  <a href="https://discord.gg/RF9c3hJVEP"><img src="https://img.shields.io/badge/Discord-Servidor_Oficial-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Servidor oficial no Discord"></a>
 </p>
 
 <p align="center">
